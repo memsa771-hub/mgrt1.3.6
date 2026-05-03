@@ -10,6 +10,11 @@ import * as buildManager from "../build/buildManager";
 import type { BuildStream } from "../build/types";
 import { ALLOWED_PLATFORMS } from "./validation-constants";
 import { resolveRuntimeRoot } from "./runtime-paths";
+import {
+  ensureToolchain,
+  toolchainKeyForTarget,
+  type EnsuredToolchain,
+} from "./toolchain-manager";
 
 function isClientModuleDir(dir: string): boolean {
   return (
@@ -45,12 +50,11 @@ function resolveClientBuildCacheRoot(): string {
   return path.resolve(ensureDataDir(), "client-build-cache");
 }
 
-function resolveAndroidNdkToolchainBin(): string | null {
+function resolveExplicitAndroidNdkToolchainBin(): string | null {
   const explicit = process.env.ANDROID_NDK_HOME?.trim();
-  const ndkHome = explicit || (process.platform === "win32" ? "" : "/opt/android-ndk");
-  if (!ndkHome) return null;
+  if (!explicit) return null;
   const hostArch = process.arch === "arm64" ? "linux-aarch64" : "linux-x86_64";
-  const toolchainBin = path.join(ndkHome, "toolchains", "llvm", "prebuilt", hostArch, "bin");
+  const toolchainBin = path.join(explicit, "toolchains", "llvm", "prebuilt", hostArch, "bin");
   try {
     return fs.existsSync(toolchainBin) ? toolchainBin : null;
   } catch {
@@ -297,13 +301,21 @@ export async function startBuildProcess(
       });
     }
 
-    const ndkBin = hasAndroidTargets ? resolveAndroidNdkToolchainBin() : null;
-    if (hasAndroidTargets && !ndkBin) {
-      sendToStream({
-        type: "output",
-        text: "Warning: Android NDK not found. Android builds require the NDK. Install it to /opt/android-ndk or set the ANDROID_NDK_HOME environment variable.\n",
-        level: "warn",
-      });
+    let ndkBin: string | null = null;
+    if (hasAndroidTargets) {
+      ndkBin = resolveExplicitAndroidNdkToolchainBin();
+      if (!ndkBin) {
+        try {
+          const ndk = await ensureToolchain("android-ndk", sendToStream);
+          ndkBin = ndk.binDir;
+        } catch (err: any) {
+          sendToStream({
+            type: "output",
+            text: `Warning: Android NDK download failed (${err.message || err}). Android builds require the NDK. Set ANDROID_NDK_HOME to use a pre-installed NDK.\n`,
+            level: "warn",
+          });
+        }
+      }
     }
 
     let buildMutex = "";
@@ -323,16 +335,21 @@ export async function startBuildProcess(
 
     let upxBin: string | null = null;
     if (config.enableUpx) {
-      const upxFound = await checkUpxAvailable(sendToStream);
-      if (!upxFound) {
-        sendToStream({
-          type: "output",
-          text: "ERROR: UPX is not installed or not found in PATH. Please install UPX (https://upx.github.io) and ensure it is available on PATH, then retry.\n",
-          level: "error",
-        });
-        throw new Error("UPX not found");
+      if (await checkUpxAvailable(sendToStream)) {
+        upxBin = "upx";
+      } else {
+        try {
+          const upxTool = await ensureToolchain("upx", sendToStream);
+          upxBin = path.join(upxTool.binDir, "upx");
+        } catch (err: any) {
+          sendToStream({
+            type: "output",
+            text: `ERROR: UPX is not installed and on-demand download failed (${err.message || err}).\n`,
+            level: "error",
+          });
+          throw new Error("UPX not found");
+        }
       }
-      upxBin = "upx";
     }
 
     const hasAssemblyData = !!(config.assemblyTitle || config.assemblyProduct || config.assemblyCompany || config.assemblyVersion || config.assemblyCopyright || config.iconBase64 || config.requireAdmin);
@@ -668,33 +685,43 @@ func runBoundFiles() {
       }
 
       if (env.CGO_ENABLED === "1") {
-        const cCompilerByTarget: Record<string, string> = {
-          "linux/amd64": "musl-gcc",
-          "linux/arm64": "aarch64-linux-gnu-gcc",
-          "linux/arm/v7": "arm-linux-gnueabihf-gcc",
-          "windows/amd64": "x86_64-w64-mingw32-gcc",
-          "windows/386": "i686-w64-mingw32-gcc",
-          ...(ndkBin ? {
-            "android/amd64": path.join(ndkBin, "x86_64-linux-android21-clang"),
-            "android/arm64": path.join(ndkBin, "aarch64-linux-android21-clang"),
-            "android/arm/v7": path.join(ndkBin, "armv7a-linux-androideabi21-clang"),
-          } : {}),
-        };
-        const cxxCompilerByTarget: Record<string, string> = {
-          "linux/amd64": "g++",
-          "linux/arm64": "aarch64-linux-gnu-g++",
-          "linux/arm/v7": "arm-linux-gnueabihf-g++",
-          "windows/amd64": "x86_64-w64-mingw32-g++",
-          "windows/386": "i686-w64-mingw32-g++",
-          ...(ndkBin ? {
-            "android/amd64": path.join(ndkBin, "x86_64-linux-android21-clang++"),
-            "android/arm64": path.join(ndkBin, "aarch64-linux-android21-clang++"),
-            "android/arm/v7": path.join(ndkBin, "armv7a-linux-androideabi21-clang++"),
-          } : {}),
-        };
+        let cc: string | undefined;
+        let cxx: string | undefined;
+        let extraBinDir: string | undefined;
 
-        const cc = cCompilerByTarget[targetKey];
-        const cxx = cxxCompilerByTarget[targetKey];
+        if (os === "android" && ndkBin) {
+          const ndkCcByTarget: Record<string, string> = {
+            "android/amd64": "x86_64-linux-android21-clang",
+            "android/arm64": "aarch64-linux-android21-clang",
+            "android/arm/v7": "armv7a-linux-androideabi21-clang",
+          };
+          const basename = ndkCcByTarget[targetKey];
+          if (basename) {
+            cc = path.join(ndkBin, basename);
+            cxx = path.join(ndkBin, `${basename}++`);
+            extraBinDir = ndkBin;
+            env.AR = path.join(ndkBin, "llvm-ar");
+          }
+        } else {
+          const tcKey = toolchainKeyForTarget(targetKey);
+          if (tcKey) {
+            try {
+              const tc: EnsuredToolchain = await ensureToolchain(tcKey, sendToStream);
+              cc = tc.ccPath;
+              cxx = tc.cxxPath;
+              extraBinDir = tc.binDir;
+              if (tc.arPath) env.AR = tc.arPath;
+            } catch (err: any) {
+              sendToStream({
+                type: "output",
+                text: `ERROR: Failed to provision cross-compile toolchain for ${targetKey}: ${err.message || err}\n`,
+                level: "error",
+              });
+              throw err;
+            }
+          }
+        }
+
         if (cc) {
           env.CC = cc;
           sendToStream({ type: "output", text: `CGO compiler: ${cc}\n`, level: "info" });
@@ -708,8 +735,9 @@ func runBoundFiles() {
         if (cxx) {
           env.CXX = cxx;
         }
-        if (os === "android" && ndkBin) {
-          env.AR = path.join(ndkBin, "llvm-ar");
+        if (extraBinDir) {
+          const sep = process.platform === "win32" ? ";" : ":";
+          env.PATH = `${extraBinDir}${sep}${env.PATH || process.env.PATH || ""}`;
         }
       }
 
@@ -1017,18 +1045,31 @@ func runBoundFiles() {
 </plist>`;
             fs.writeFileSync(path.join(payloadAppDir, "Info.plist"), infoPlist, "utf8");
 
-            // Attempt pseudo-signing with ldid if available
+            // Attempt pseudo-signing with ldid (system-installed or downloaded on demand).
             try {
-              const ldidResult = await $`which ldid`.nothrow().quiet();
-              if (ldidResult.exitCode === 0) {
-                const ldidSign = await $`ldid -S ${path.join(payloadAppDir, appName)}`.nothrow().quiet();
+              let ldidBin: string | null = null;
+              const sysLdid = await $`which ldid`.nothrow().quiet();
+              if (sysLdid.exitCode === 0) {
+                ldidBin = "ldid";
+              } else {
+                try {
+                  const tc = await ensureToolchain("ldid", sendToStream);
+                  ldidBin = path.join(tc.binDir, "ldid");
+                } catch (dlErr: any) {
+                  sendToStream({
+                    type: "output",
+                    text: `ldid not found and download failed (${dlErr.message || dlErr}); skipping pseudo-signing.\n`,
+                    level: "warn",
+                  });
+                }
+              }
+              if (ldidBin) {
+                const ldidSign = await $`${ldidBin} -S ${path.join(payloadAppDir, appName)}`.nothrow().quiet();
                 if (ldidSign.exitCode === 0) {
                   sendToStream({ type: "output", text: `Pseudo-signed with ldid\n`, level: "info" });
                 } else {
                   sendToStream({ type: "output", text: `WARNING: ldid signing failed (non-fatal)\n`, level: "warn" });
                 }
-              } else {
-                sendToStream({ type: "output", text: `ldid not found; skipping pseudo-signing (install ldid for TrollStore/sideload compatibility)\n`, level: "warn" });
               }
             } catch { /* ldid is optional */ }
 

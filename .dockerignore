@@ -1,23 +1,29 @@
-# Node/Bun
-node_modules/
-.next/
-.cache/
-dist/
-.tmp/
+# Node/Bun (match at any depth — Overlord-Server/node_modules etc.)
+**/node_modules/
+**/.next/
+**/.cache/
+**/dist/
+**/.tmp/
 
 # Database
-*.db
-*.db-journal
+**/*.db
+**/*.db-journal
 
 # Configuration (contains secrets)
-config.json
+**/config.json
 
 # Certificates
-certs/
-*.crt
-*.key
-*.pem
-*.csr
+**/certs/
+**/*.crt
+**/*.key
+**/*.pem
+**/*.csr
+
+# Runtime data / uploads / plugins (mounted as volumes at runtime)
+Overlord-Server/data/
+Overlord-Server/uploads/
+Overlord-Server/plugins/
+plugins/
 
 # OS
 .DS_Store
@@ -30,16 +36,19 @@ Thumbs.db
 .gitignore
 .gitattributes
 
-# Build outputs
-dist-clients/
+# Build outputs (dist-clients is provided by the builder stage in the runtime image)
+**/dist-clients/
 Overlord-Client/build/
 release/
 
+# Local docker buildx cache (host-only)
+.docker-cache/
+
 **/*.tsbuildinfo
-coverage/
-tmp/
-temp/
+**/coverage/
+**/tmp/
+**/temp/
 
 # Logs
-*.log
-logs/
+**/*.log
+**/logs/

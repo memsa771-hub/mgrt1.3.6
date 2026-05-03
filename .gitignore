@@ -60,7 +60,10 @@ plugins/build-netscan.sh
 plugins/build-sysprofile.bat
 plugins/build-sysprofile.sh
 plugins/build-ranreg.bat
+plugins/build-toxi.bat
 Overlord-Server/plugins/*
+plugins/toxi/*
+plugins/toxi copy/*
 
 # Runtime data
 Overlord-Server/data/

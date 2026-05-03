@@ -167,6 +167,33 @@ menuStyle.textContent = `
   flex-shrink: 0;
   font-size: 13px;
 }
+.ctx-plugin-item {
+  min-width: 220px;
+}
+.ctx-plugin-label {
+  flex: 1;
+}
+.ctx-plugin-trust {
+  font-size: 10px;
+  flex-shrink: 0;
+}
+.ctx-plugin-badge {
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(148,163,184,0.25);
+  background: rgba(15,23,42,0.6);
+  color: #94a3b8;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+.ctx-plugin-badge.is-loaded {
+  border-color: rgba(16,185,129,0.45);
+  background: rgba(6,78,59,0.35);
+  color: #6ee7b7;
+}
 .ctx-chevron {
   margin-left: auto;
   font-size: 10px;

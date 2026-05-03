@@ -434,8 +434,7 @@ async function loadPluginsForClient(clientId) {
         continue;
       }
       const btn = document.createElement("button");
-      btn.className =
-        "w-full text-left px-3 py-2 rounded-lg border border-slate-700 bg-slate-800/60 hover:bg-slate-700 text-slate-100 flex items-center gap-2 justify-between";
+      btn.className = "ctx-item ctx-plugin-item";
       btn.dataset.plugin = plugin.id;
       btn.dataset.loaded = plugin.loaded ? "true" : "false";
       if (plugin.lastError) {
@@ -445,55 +444,54 @@ async function loadPluginsForClient(clientId) {
       const sig = plugin.signature;
       if (sig && sig.signed && !sig.valid) {
         btn.disabled = true;
-        btn.classList.add("opacity-50", "cursor-not-allowed");
+        btn.setAttribute("aria-disabled", "true");
         btn.title = "Plugin signature is invalid — cannot load";
       }
 
-      const label = document.createElement("span");
-      label.className = "flex items-center gap-1";
       const labelIcon = document.createElement("i");
-      labelIcon.className = "fa-solid fa-puzzle-piece";
-      label.appendChild(labelIcon);
-      label.append(` ${plugin.name || plugin.id}`);
+      labelIcon.className =
+        "fa-solid fa-puzzle-piece ctx-icon " +
+        (plugin.loaded ? "text-emerald-400" : "text-fuchsia-400");
+      btn.appendChild(labelIcon);
+
+      const label = document.createElement("span");
+      label.className = "ctx-plugin-label";
+      label.textContent = plugin.name || plugin.id;
+      btn.appendChild(label);
 
       if (sig) {
         const trustIcon = document.createElement("i");
         if (sig.signed && !sig.valid) {
-          trustIcon.className = "fa-solid fa-shield-xmark text-red-400 text-xs ml-1";
+          trustIcon.className = "fa-solid fa-shield-xmark ctx-plugin-trust text-red-400";
           trustIcon.title = "Invalid signature";
         } else if (sig.signed && sig.valid && sig.trusted) {
-          trustIcon.className = "fa-solid fa-shield-check text-emerald-400 text-xs ml-1";
+          trustIcon.className = "fa-solid fa-shield-check ctx-plugin-trust text-emerald-400";
           trustIcon.title = "Trusted";
         } else if (sig.signed && sig.valid && !sig.trusted) {
-          trustIcon.className = "fa-solid fa-shield text-yellow-400 text-xs ml-1";
+          trustIcon.className = "fa-solid fa-shield ctx-plugin-trust text-yellow-400";
           trustIcon.title = "Signed but untrusted";
         } else {
-          trustIcon.className = "fa-solid fa-shield-halved text-orange-400 text-xs ml-1";
+          trustIcon.className = "fa-solid fa-shield-halved ctx-plugin-trust text-orange-400";
           trustIcon.title = "Unsigned";
         }
-        label.appendChild(trustIcon);
+        btn.appendChild(trustIcon);
       }
+
       const badge = document.createElement("span");
-      badge.className =
-        "text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full border" +
-        (plugin.loaded
-          ? " border-emerald-600 text-emerald-300 bg-emerald-900/40"
-          : " border-slate-600 text-slate-300 bg-slate-800/60");
+      badge.className = "ctx-plugin-badge" + (plugin.loaded ? " is-loaded" : "");
       badge.textContent = plugin.loaded ? "loaded" : "available";
-      btn.appendChild(label);
       btn.appendChild(badge);
       container.appendChild(btn);
 
       if (plugin.loaded) {
         const unloadBtn = document.createElement("button");
-        unloadBtn.className =
-          "w-full text-left px-3 py-2 rounded-lg border border-red-800 bg-red-900/30 hover:bg-red-800/60 text-red-100 flex items-center gap-2";
+        unloadBtn.className = "ctx-item";
         unloadBtn.dataset.pluginUnload = plugin.id;
         const unloadIcon = document.createElement("i");
-        unloadIcon.className = "fa-solid fa-plug-circle-xmark";
+        unloadIcon.className = "fa-solid fa-plug-circle-xmark ctx-icon text-red-400";
+        unloadBtn.appendChild(unloadIcon);
         const unloadText = document.createElement("span");
         unloadText.textContent = `Unload ${plugin.name || plugin.id}`;
-        unloadBtn.appendChild(unloadIcon);
         unloadBtn.appendChild(unloadText);
         container.appendChild(unloadBtn);
       }

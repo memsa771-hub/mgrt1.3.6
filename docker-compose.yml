@@ -44,6 +44,9 @@ services:
       OVERLORD_FILE_UPLOAD_INTENT_TTL_MS: ${OVERLORD_FILE_UPLOAD_INTENT_TTL_MS:-1800000}
       OVERLORD_FILE_UPLOAD_PULL_TTL_MS: ${OVERLORD_FILE_UPLOAD_PULL_TTL_MS:-1800000}
     volumes:
+      # overlord-data also caches downloaded cross-compile toolchains
+      # under /app/data/toolchains, fetched on first agent build for a
+      # given target (mingw, aarch64/armv7/musl, Android NDK, ldid, UPX).
       - overlord-data:/app/data
       - overlord-certs:/app/certs
       - overlord-client-build-cache:/app/client-build-cache
