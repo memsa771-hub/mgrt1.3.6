@@ -12,6 +12,9 @@ import { encodeMessage, type PluginSignatureInfo } from "../../protocol";
 import { getConfig, updatePluginsConfig } from "../../config";
 import { getOrVerifySignature, BUILTIN_TRUSTED_KEYS } from "../plugin-signature";
 import type { PluginRuntime } from "../plugin-runtime/runtime";
+import { getPluginPull, deletePluginPull } from "../plugin-state-bundle";
+import { isAuthorizedAgentRequest } from "../agent-auth";
+import { logger } from "../../logger";
 
 type PluginManifest = {
   id: string;
@@ -22,7 +25,8 @@ type PluginManifest = {
 
 type PluginBundle = {
   manifest: PluginManifest;
-  binary: Uint8Array | null;
+  binaryPath: string | null;
+  size: number;
 };
 
 type PluginState = {
@@ -66,6 +70,48 @@ export async function handlePluginRoutes(
     !url.pathname.match(/^\/api\/clients\/.+\/plugins/)
   ) {
     return null;
+  }
+
+  if (req.method === "GET" && url.pathname.startsWith("/api/plugins/pull/")) {
+    const agentToken = getConfig().auth.agentToken;
+    if (!isAuthorizedAgentRequest(req, url, agentToken)) {
+      return new Response("Unauthorized", { status: 401 });
+    }
+
+    let pullId = "";
+    try {
+      pullId = decodeURIComponent(url.pathname.slice("/api/plugins/pull/".length));
+    } catch {
+      return new Response("Bad request", { status: 400 });
+    }
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(pullId)) {
+      return new Response("Bad request", { status: 400 });
+    }
+
+    const pull = getPluginPull(pullId);
+    if (!pull || pull.expiresAt < Date.now()) {
+      return new Response("Not found", { status: 404 });
+    }
+    const requesterClientId = req.headers.get("x-overlord-client-id") || "";
+    if (!requesterClientId || requesterClientId !== pull.clientId) {
+      return new Response("Forbidden", { status: 403 });
+    }
+
+    deletePluginPull(pullId);
+
+    logger.debug("[plugin] http pull", {
+      pullId,
+      clientId: pull.clientId,
+      pluginId: pull.pluginId,
+      bytes: pull.size,
+    });
+
+    const headers = {
+      ...deps.secureHeaders("application/octet-stream"),
+      "Cache-Control": "no-store, private",
+      "Content-Length": String(pull.size),
+    };
+    return new Response(Bun.file(pull.binaryPath).stream(), { headers });
   }
 
   async function serveLoginOrUnauthorized(): Promise<Response> {

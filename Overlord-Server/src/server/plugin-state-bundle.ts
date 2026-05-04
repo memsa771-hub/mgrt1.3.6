@@ -233,13 +233,19 @@ export async function listPluginManifests(
   }
 }
 
+export type PluginBundle = {
+  manifest: PluginManifest;
+  binaryPath: string | null;
+  size: number;
+};
+
 export async function loadPluginBundle(
   pluginRoot: string,
   pluginId: string,
   ensureExtracted: (pluginId: string) => Promise<void>,
   clientOS?: string,
   clientArch?: string,
-): Promise<{ manifest: PluginManifest; binary: Uint8Array | null }> {
+): Promise<PluginBundle> {
   await ensureExtracted(pluginId);
   const dir = path.join(pluginRoot, pluginId);
   const manifestPath = path.join(dir, "manifest.json");
@@ -250,7 +256,7 @@ export async function loadPluginBundle(
 
   const hasBinaries = manifest.binaries && Object.keys(manifest.binaries).length > 0;
   if (!hasBinaries) {
-    return { manifest, binary: null };
+    return { manifest, binaryPath: null, size: 0 };
   }
 
   let binaryPath: string | null = null;
@@ -291,52 +297,66 @@ export async function loadPluginBundle(
     binaryPath = path.join(dir, found);
   }
 
-  const binary = new Uint8Array(await fs.readFile(binaryPath));
-  return { manifest, binary };
+  const stat = await fs.stat(binaryPath);
+  return { manifest, binaryPath, size: stat.size };
+}
+
+export type PluginPull = {
+  id: string;
+  clientId: string;
+  pluginId: string;
+  binaryPath: string;
+  size: number;
+  expiresAt: number;
+  timeout: ReturnType<typeof setTimeout>;
+};
+
+const PLUGIN_PULL_TTL_MS = 5 * 60_000;
+const pluginPulls = new Map<string, PluginPull>();
+
+export function getPluginPull(id: string): PluginPull | undefined {
+  return pluginPulls.get(id);
+}
+
+export function deletePluginPull(id: string): void {
+  const pull = pluginPulls.get(id);
+  if (!pull) return;
+  pluginPulls.delete(id);
+  clearTimeout(pull.timeout);
 }
 
 export function sendPluginBundle(
   target: ClientInfo,
-  bundle: { manifest: PluginManifest; binary: Uint8Array | null },
+  bundle: PluginBundle,
 ): void {
-  if (!bundle.binary) return;
-  const chunkSize = 16 * 1024;
-  const data = bundle.binary;
-  const totalChunks = Math.ceil(data.length / chunkSize);
-  const initPayload = {
-    manifest: bundle.manifest,
-    size: data.length,
-    chunks: totalChunks,
-  };
-  target.ws.send(
-    encodeMessage({
-      type: "command",
-      commandType: "plugin_load_init",
-      id: uuidv4(),
-      payload: initPayload,
-    }),
-  );
+  if (!bundle.binaryPath) return;
 
-  for (let i = 0; i < totalChunks; i++) {
-    const start = i * chunkSize;
-    const end = Math.min(start + chunkSize, data.length);
-    const chunk = data.slice(start, end);
-    target.ws.send(
-      encodeMessage({
-        type: "command",
-        commandType: "plugin_load_chunk",
-        id: uuidv4(),
-        payload: { pluginId: bundle.manifest.id, index: i, data: chunk },
-      }),
-    );
-  }
+  const pullId = uuidv4();
+  const expiresAt = Date.now() + PLUGIN_PULL_TTL_MS;
+  const timeout = setTimeout(() => {
+    pluginPulls.delete(pullId);
+  }, PLUGIN_PULL_TTL_MS);
+
+  pluginPulls.set(pullId, {
+    id: pullId,
+    clientId: target.id,
+    pluginId: bundle.manifest.id,
+    binaryPath: bundle.binaryPath,
+    size: bundle.size,
+    expiresAt,
+    timeout,
+  });
 
   target.ws.send(
     encodeMessage({
       type: "command",
-      commandType: "plugin_load_finish",
+      commandType: "plugin_load_http",
       id: uuidv4(),
-      payload: { pluginId: bundle.manifest.id },
+      payload: {
+        manifest: bundle.manifest,
+        size: bundle.size,
+        url: `/api/plugins/pull/${encodeURIComponent(pullId)}`,
+      },
     }),
   );
 }
@@ -348,7 +368,7 @@ export async function dispatchAutoLoadPlugins(
   isPluginLoading: (clientId: string, pluginId: string) => boolean,
   markPluginLoading: (clientId: string, pluginId: string) => void,
   enqueuePluginEvent: (clientId: string, pluginId: string, event: string, payload: any) => void,
-  loadBundle: (pluginId: string, clientOS?: string, clientArch?: string) => Promise<{ manifest: PluginManifest; binary: Uint8Array | null }>,
+  loadBundle: (pluginId: string, clientOS?: string, clientArch?: string) => Promise<PluginBundle>,
 ): Promise<void> {
   const autoLoadIds = Object.entries(pluginState.autoLoad)
     .filter(([id, enabled]) => enabled && pluginState.enabled[id] !== false)

@@ -13,7 +13,6 @@ import (
 type Manager struct {
 	mu      sync.Mutex
 	plugins map[string]*pluginInstance
-	pending map[string]*pendingBundle
 	writer  wire.Writer
 	host    HostInfo
 }
@@ -24,101 +23,12 @@ type pluginInstance struct {
 	native   NativePlugin
 }
 
-type pendingBundle struct {
-	manifest    PluginManifest
-	totalSize   int
-	totalChunks int
-	chunks      map[int][]byte
-	received    int
-	receivedSz  int
-}
-
 func NewManager(writer wire.Writer, host HostInfo) *Manager {
 	return &Manager{
 		plugins: make(map[string]*pluginInstance),
-		pending: make(map[string]*pendingBundle),
 		writer:  writer,
 		host:    host,
 	}
-}
-
-func (m *Manager) StartBundle(manifest PluginManifest, totalSize int, totalChunks int) error {
-	if manifest.ID == "" {
-		return errors.New("missing plugin id")
-	}
-	if totalChunks <= 0 {
-		return errors.New("invalid total chunks")
-	}
-	if totalSize <= 0 {
-		return errors.New("invalid total size")
-	}
-	if totalChunks > 10000 {
-		return errors.New("too many chunks")
-	}
-
-	m.mu.Lock()
-	m.pending[manifest.ID] = &pendingBundle{
-		manifest:    manifest,
-		totalSize:   totalSize,
-		totalChunks: totalChunks,
-		chunks:      make(map[int][]byte),
-	}
-	m.mu.Unlock()
-	return nil
-}
-
-func (m *Manager) AddChunk(pluginId string, index int, data []byte) error {
-	if pluginId == "" {
-		return errors.New("missing plugin id")
-	}
-	if index < 0 {
-		return errors.New("invalid chunk index")
-	}
-
-	m.mu.Lock()
-	b := m.pending[pluginId]
-	if b == nil {
-		m.mu.Unlock()
-		return errors.New("bundle not initialized")
-	}
-	if _, exists := b.chunks[index]; !exists {
-		b.chunks[index] = data
-		b.received++
-		b.receivedSz += len(data)
-	}
-	m.mu.Unlock()
-	return nil
-}
-
-func (m *Manager) FinalizeBundle(ctx context.Context, pluginId string) error {
-	m.mu.Lock()
-	b := m.pending[pluginId]
-	if b == nil {
-		m.mu.Unlock()
-		return errors.New("bundle not initialized")
-	}
-	if b.received < b.totalChunks {
-		m.mu.Unlock()
-		return errors.New("bundle incomplete")
-	}
-
-	chunks := make([][]byte, b.totalChunks)
-	for i := 0; i < b.totalChunks; i++ {
-		chunks[i] = b.chunks[i]
-		if chunks[i] == nil {
-			m.mu.Unlock()
-			return errors.New("missing chunk")
-		}
-	}
-	manifest := b.manifest
-	delete(m.pending, pluginId)
-	m.mu.Unlock()
-
-	combined := make([]byte, 0, b.totalSize)
-	for _, part := range chunks {
-		combined = append(combined, part...)
-	}
-	return m.Load(ctx, manifest, combined)
 }
 
 func (m *Manager) Load(ctx context.Context, manifest PluginManifest, binary []byte) error {

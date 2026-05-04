@@ -575,45 +575,19 @@ func HandleCommand(ctx context.Context, env *runtime.Env, envelope map[string]in
 		}
 		_ = wire.WriteMsg(ctx, env.Conn, wire.PluginEvent{Type: "plugin_event", PluginID: manifest.ID, Event: "loaded"})
 		return wire.WriteMsg(ctx, env.Conn, wire.CommandResult{Type: "command_result", CommandID: cmdID, OK: true})
-	case "plugin_load_init":
+	case "plugin_load_http":
 		payload, _ := envelope["payload"].(map[string]interface{})
-		if payload == nil || env.Plugins == nil {
-			return nil
+		if payload == nil {
+			return wire.WriteMsg(ctx, env.Conn, wire.CommandResult{Type: "command_result", CommandID: cmdID, OK: false, Message: "missing payload"})
 		}
 		manifestRaw, _ := payload["manifest"].(map[string]interface{})
-		totalSize := toInt(payload["size"])
-		totalChunks := toInt(payload["chunks"])
 		manifest, err := plugins.ManifestFromMap(manifestRaw)
 		if err != nil {
-			return nil
+			return wire.WriteMsg(ctx, env.Conn, wire.CommandResult{Type: "command_result", CommandID: cmdID, OK: false, Message: err.Error()})
 		}
-		_ = env.Plugins.StartBundle(manifest, totalSize, totalChunks)
-		return nil
-	case "plugin_load_chunk":
-		payload, _ := envelope["payload"].(map[string]interface{})
-		if payload == nil || env.Plugins == nil {
-			return nil
-		}
-		pluginId, _ := payload["pluginId"].(string)
-		index := toInt(payload["index"])
-		data, _ := payload["data"].([]byte)
-		_ = env.Plugins.AddChunk(pluginId, index, data)
-		return nil
-	case "plugin_load_finish":
-		payload, _ := envelope["payload"].(map[string]interface{})
-		if payload == nil || env.Plugins == nil {
-			return nil
-		}
-		pluginId, _ := payload["pluginId"].(string)
-		if pluginId == "" {
-			return nil
-		}
-		if err := env.Plugins.FinalizeBundle(ctx, pluginId); err != nil {
-			_ = wire.WriteMsg(ctx, env.Conn, wire.PluginEvent{Type: "plugin_event", PluginID: pluginId, Event: "error", Error: err.Error()})
-			return nil
-		}
-		_ = wire.WriteMsg(ctx, env.Conn, wire.PluginEvent{Type: "plugin_event", PluginID: pluginId, Event: "loaded"})
-		return nil
+		pullURL, _ := payload["url"].(string)
+		expectedSize := int64(toInt(payload["size"]))
+		return HandlePluginLoadHTTP(ctx, env, cmdID, manifest, pullURL, expectedSize)
 	case "plugin_unload":
 		payload, _ := envelope["payload"].(map[string]interface{})
 		if payload == nil || env.Plugins == nil {
