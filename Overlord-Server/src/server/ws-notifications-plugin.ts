@@ -2,6 +2,7 @@ import type { ServerWebSocket } from "bun";
 import { encode as msgpackEncode } from "@msgpack/msgpack";
 import { v4 as uuidv4 } from "uuid";
 import * as clientManager from "../clientManager";
+import { saveNotification, getNotificationHistory } from "../db";
 import { logger } from "../logger";
 import { metrics } from "../metrics";
 import { encodeMessage } from "../protocol";
@@ -47,7 +48,6 @@ type NotificationConfigShape = {
 };
 
 type CreateDeps = {
-  notificationHistory: NotificationRecord[];
   notificationRate: Map<string, NotificationRateState>;
   pendingNotificationScreenshots: Map<string, PendingNotificationScreenshot>;
   pluginLoadedByClient: Map<string, Set<string>>;
@@ -241,10 +241,11 @@ export function createNotificationPluginHandlers(deps: CreateDeps) {
       ws.data.sessionId = sessionId;
       logger.info(`[notify] viewer connected session=${sessionId} userId=${userId ?? "?"} role=${userRole}`);
 
+      const allHistory = getNotificationHistory(500);
       const visibleHistory =
         userRole === "admin"
-          ? deps.notificationHistory
-          : deps.notificationHistory.filter(
+          ? allHistory
+          : allHistory.filter(
               (item) =>
                 userId !== undefined &&
                 deps.canUserAccessClient(userId, userRole, item.clientId),
@@ -281,12 +282,7 @@ export function createNotificationPluginHandlers(deps: CreateDeps) {
         ts,
       };
 
-      deps.notificationHistory.unshift(record);
-      const notificationConfig = deps.getNotificationConfig();
-      const limit = Math.max(50, notificationConfig.historyLimit || 200);
-      if (deps.notificationHistory.length > limit) {
-        deps.notificationHistory.splice(limit);
-      }
+      saveNotification(record);
 
       requestNotificationScreenshot(info, record);
 

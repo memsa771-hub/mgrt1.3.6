@@ -217,6 +217,20 @@ db.run(`
 db.run(`CREATE INDEX IF NOT EXISTS idx_build_profiles_user_updated ON build_profiles(user_id, updated_at DESC);`);
 
 db.run(`
+  CREATE TABLE IF NOT EXISTS saved_scripts (
+    id TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    content TEXT NOT NULL,
+    script_type TEXT NOT NULL DEFAULT 'powershell',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_saved_scripts_user ON saved_scripts(user_id, updated_at DESC);`);
+
+
+db.run(`
   CREATE TABLE IF NOT EXISTS notification_screenshots (
     id TEXT PRIMARY KEY,
     notification_id TEXT NOT NULL,
@@ -234,6 +248,26 @@ db.run(
 db.run(
   `CREATE INDEX IF NOT EXISTS idx_notification_screenshots_ts ON notification_screenshots(ts DESC);`,
 );
+
+db.run(`
+  CREATE TABLE IF NOT EXISTS notifications (
+    id TEXT PRIMARY KEY,
+    client_id TEXT NOT NULL,
+    host TEXT,
+    user TEXT,
+    os TEXT,
+    title TEXT NOT NULL,
+    process TEXT,
+    process_path TEXT,
+    pid INTEGER,
+    keyword TEXT,
+    category TEXT NOT NULL DEFAULT 'active_window',
+    ts INTEGER NOT NULL,
+    screenshot_id TEXT
+  );
+`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_notifications_ts ON notifications(ts DESC);`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_notifications_client_id ON notifications(client_id);`);
 
 db.run(`
   CREATE TABLE IF NOT EXISTS push_subscriptions (
@@ -1534,6 +1568,72 @@ export function deleteBuildProfileForUser(userId: number, name: string): boolean
   return ((result as any)?.changes || 0) > 0;
 }
 
+export interface SavedScriptRecord {
+  id: string;
+  userId: number;
+  name: string;
+  content: string;
+  scriptType: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export function listSavedScriptsForUser(userId: number): SavedScriptRecord[] {
+  return db
+    .query<any>(
+      `SELECT id, user_id, name, content, script_type, created_at, updated_at
+       FROM saved_scripts
+       WHERE user_id = ?
+       ORDER BY updated_at DESC`,
+    )
+    .all(userId)
+    .map((row: any) => ({
+      id: row.id,
+      userId: row.user_id,
+      name: row.name,
+      content: row.content,
+      scriptType: row.script_type,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
+}
+
+export function saveSavedScript(
+  id: string,
+  userId: number,
+  name: string,
+  content: string,
+  scriptType: string,
+): SavedScriptRecord {
+  const now = Date.now();
+  db.run(
+    `INSERT INTO saved_scripts (id, user_id, name, content, script_type, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       name = excluded.name,
+       content = excluded.content,
+       script_type = excluded.script_type,
+       updated_at = excluded.updated_at`,
+    id,
+    userId,
+    name,
+    content,
+    scriptType,
+    now,
+    now,
+  );
+  return { id, userId, name, content, scriptType, createdAt: now, updatedAt: now };
+}
+
+export function deleteSavedScript(userId: number, scriptId: string): boolean {
+  const result = db.run(
+    `DELETE FROM saved_scripts WHERE id = ? AND user_id = ?`,
+    scriptId,
+    userId,
+  );
+  return ((result as any)?.changes || 0) > 0;
+}
+
 export interface BuildRecord {
   id: string;
   status: string;
@@ -1733,6 +1833,89 @@ export function getNotificationScreenshot(notificationId: string): NotificationS
 export function clearNotificationScreenshots() {
   db.run(`DELETE FROM notification_screenshots`);
   console.log("[db] cleared notification screenshots");
+}
+
+export type NotificationRow = {
+  id: string;
+  clientId: string;
+  host?: string;
+  user?: string;
+  os?: string;
+  title: string;
+  process?: string;
+  processPath?: string;
+  pid?: number;
+  keyword?: string;
+  category: string;
+  ts: number;
+  screenshotId?: string;
+};
+
+export function saveNotification(record: NotificationRow) {
+  db.run(
+    `INSERT OR REPLACE INTO notifications
+      (id, client_id, host, user, os, title, process, process_path, pid, keyword, category, ts, screenshot_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    record.id,
+    record.clientId,
+    record.host ?? null,
+    record.user ?? null,
+    record.os ?? null,
+    record.title,
+    record.process ?? null,
+    record.processPath ?? null,
+    record.pid ?? null,
+    record.keyword ?? null,
+    record.category,
+    record.ts,
+    record.screenshotId ?? null,
+  );
+}
+
+export function updateNotificationScreenshotId(notificationId: string, screenshotId: string) {
+  db.run(
+    `UPDATE notifications SET screenshot_id = ? WHERE id = ?`,
+    screenshotId,
+    notificationId,
+  );
+}
+
+export function getNotificationHistory(limit: number = 500): NotificationRow[] {
+  const rows = db
+    .query<any>(`SELECT * FROM notifications ORDER BY ts DESC LIMIT ?`)
+    .all(limit);
+  return rows.map((row: any) => ({
+    id: row.id,
+    clientId: row.client_id,
+    host: row.host ?? undefined,
+    user: row.user ?? undefined,
+    os: row.os ?? undefined,
+    title: row.title,
+    process: row.process ?? undefined,
+    processPath: row.process_path ?? undefined,
+    pid: row.pid ?? undefined,
+    keyword: row.keyword ?? undefined,
+    category: row.category,
+    ts: row.ts,
+    screenshotId: row.screenshot_id ?? undefined,
+  }));
+}
+
+const NOTIFICATION_RETENTION_MS = 3 * 24 * 60 * 60 * 1000;
+
+export function pruneOldNotifications() {
+  const cutoff = Date.now() - NOTIFICATION_RETENTION_MS;
+  db.run(`DELETE FROM notification_screenshots WHERE notification_id IN (SELECT id FROM notifications WHERE ts < ?)`, cutoff);
+  const result = db.run(`DELETE FROM notifications WHERE ts < ?`, cutoff);
+  if (result.changes > 0) {
+    console.log(`[db] pruned ${result.changes} notifications older than 3 days`);
+  }
+}
+
+export function clearNotifications() {
+  db.run(`DELETE FROM notifications`);
+  db.run(`DELETE FROM notification_screenshots`);
+  console.log("[db] cleared all notifications and screenshots");
 }
 
 export function getClientEnrollmentStatus(id: string): string | null {

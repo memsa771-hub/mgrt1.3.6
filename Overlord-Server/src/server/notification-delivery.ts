@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from "uuid";
 import {
   getNotificationScreenshot,
   saveNotificationScreenshot,
+  updateNotificationScreenshotId,
   getAllPushSubscriptions,
   deletePushSubscription,
   type NotificationScreenshotRecord,
@@ -133,7 +134,6 @@ export function takePendingNotificationScreenshot(
 }
 
 export function storeNotificationScreenshot(
-  notificationHistory: NotificationRecord[],
   pending: PendingNotificationScreenshot,
   bytes: Uint8Array,
   format: string,
@@ -154,10 +154,7 @@ export function storeNotificationScreenshot(
     bytes,
   });
 
-  const record = notificationHistory.find((item) => item.id === pending.notificationId);
-  if (record) {
-    record.screenshotId = screenshotId;
-  }
+  updateNotificationScreenshotId(pending.notificationId, screenshotId);
 }
 
 async function deliverToUserWebhook(

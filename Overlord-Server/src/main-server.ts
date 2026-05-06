@@ -5,7 +5,7 @@ import { fileURLToPath } from "url";
 import path from "path";
 import fs from "fs/promises";
 import { existsSync } from "node:fs";
-import { upsertClientRow, setOnlineState, listClients, markAllClientsOffline, getBuild, getBuildByTag, getAllBuilds, deleteExpiredBuilds, deleteBuild, getNotificationScreenshot, clearNotificationScreenshots, deleteClientRow, getClientIp, banIp, isIpBanned, clientExists, deleteExpiredSharedFiles, getChatHistory, insertChatMessage, getOnlineClientCountForUser, deleteExpiredChatMessages, recordBuildClaim, getClientMetricsSummary } from "./db";
+import { upsertClientRow, setOnlineState, listClients, markAllClientsOffline, getBuild, getBuildByTag, getAllBuilds, deleteExpiredBuilds, deleteBuild, getNotificationScreenshot, clearNotificationScreenshots, deleteClientRow, getClientIp, banIp, isIpBanned, clientExists, deleteExpiredSharedFiles, getChatHistory, insertChatMessage, getOnlineClientCountForUser, deleteExpiredChatMessages, recordBuildClaim, getClientMetricsSummary, pruneOldNotifications } from "./db";
 import { handleFrame, handleHello, handlePing, handlePong } from "./wsHandlers";
 import { getMessageByteLength, getMaxPayloadLimit, isAllowedClientMessageType } from "./wsValidation";
 import { ClientInfo, ClientRole } from "./types";
@@ -19,6 +19,7 @@ import { metrics } from "./metrics";
 import { ensureDataDir } from "./paths";
 import { handleAuthRoutes } from "./server/routes/auth-routes";
 import { handleAutoScriptsRoutes } from "./server/routes/auto-scripts-routes";
+import { handleSavedScriptsRoutes } from "./server/routes/saved-scripts-routes";
 import { handleEnrollmentRoutes, setPostApproveHook } from "./server/routes/enrollment-routes";
 import { handleChatRoutes } from "./server/routes/chat-routes";
 import { handleBuildRoutes } from "./server/routes/build-routes";
@@ -285,7 +286,6 @@ type NotificationRateState = {
   lastWarned: number;
 };
 
-const notificationHistory: NotificationRecord[] = [];
 const notificationRate = new Map<string, NotificationRateState>();
 const getNotificationConfig = () => getConfig().notifications;
 
@@ -298,7 +298,10 @@ const storeNotificationScreenshotForPending = (
   format: string,
   width?: number,
   height?: number,
-) => storeNotificationScreenshot(notificationHistory, pending, bytes, format, width, height);
+) => storeNotificationScreenshot(pending, bytes, format, width, height);
+
+pruneOldNotifications();
+setInterval(pruneOldNotifications, 60 * 60 * 1000);
 const deliverNotificationWithScreenshotForRecord = (record: NotificationRecord) => {
   const getUserDeliveryTargets = (clientId: string): UserDeliveryTarget[] => {
     return getUsersForNotificationDeliveryByClient(clientId)
@@ -321,7 +324,6 @@ const deliverNotificationWithScreenshotForRecord = (record: NotificationRecord) 
 };
 
 const notificationPluginHandlers = createNotificationPluginHandlers({
-  notificationHistory,
   notificationRate,
   pendingNotificationScreenshots,
   pluginLoadedByClient,
@@ -711,6 +713,7 @@ async function startServer() {
       handleAuthRoutes,
       handleNotificationsConfigRoutes,
       handleAutoScriptsRoutes,
+      handleSavedScriptsRoutes,
       handleAutoDeployRoutes,
       handleEnrollmentRoutes,
       handleChatRoutes,

@@ -22,7 +22,6 @@ const autoTaskList = document.getElementById("auto-task-list");
 let allClients = [];
 let filteredClients = [];
 const selectedClients = new Set();
-const SAVED_SCRIPTS_KEY = "overlord_saved_scripts";
 let autoTasks = [];
 let autoTaskEditingId = null;
 let editorInstance = null;
@@ -232,27 +231,23 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
-function getSavedScripts() {
+let cachedSavedScripts = [];
+
+async function loadSavedScripts() {
   try {
-    const items = JSON.parse(localStorage.getItem(SAVED_SCRIPTS_KEY) || "[]");
-    return Array.isArray(items) ? items : [];
+    const res = await fetch("/api/saved-scripts");
+    if (!res.ok) throw new Error("Failed to load saved scripts");
+    const data = await res.json();
+    cachedSavedScripts = Array.isArray(data.items) ? data.items : [];
   } catch (err) {
     console.error("Failed to load saved scripts:", err);
-    return [];
+    cachedSavedScripts = [];
   }
-}
-
-function setSavedScripts(scripts) {
-  try {
-    const trimmed = scripts.slice(0, 50);
-    localStorage.setItem(SAVED_SCRIPTS_KEY, JSON.stringify(trimmed));
-  } catch (err) {
-    console.error("Failed to save scripts:", err);
-  }
+  return cachedSavedScripts;
 }
 
 function renderSavedScripts() {
-  const scripts = getSavedScripts().sort((a, b) => b.updatedAt - a.updatedAt);
+  const scripts = cachedSavedScripts.slice().sort((a, b) => b.updatedAt - a.updatedAt);
 
   if (scripts.length === 0) {
     savedScriptsList.innerHTML = '<div class="text-slate-500 text-sm">No saved scripts yet.</div>';
@@ -264,7 +259,7 @@ function renderSavedScripts() {
       <div class="flex items-center justify-between gap-2 px-3 py-2 rounded-lg border border-slate-700 bg-slate-800/50">
         <div class="min-w-0">
           <div class="font-semibold text-slate-100 truncate">${escapeHtml(s.name)}</div>
-          <div class="text-xs text-slate-400">${escapeHtml(s.type)} • ${new Date(s.updatedAt).toLocaleString()}</div>
+          <div class="text-xs text-slate-400">${escapeHtml(s.scriptType)} • ${new Date(s.updatedAt).toLocaleString()}</div>
         </div>
         <div class="flex items-center gap-2">
           <button class="load-saved-script px-2 py-1 text-xs rounded bg-emerald-600 hover:bg-emerald-700 text-white" data-id="${escapeHtml(s.id)}">
@@ -281,29 +276,34 @@ function renderSavedScripts() {
   savedScriptsList.querySelectorAll(".load-saved-script").forEach((btn) => {
     btn.addEventListener("click", () => {
       const id = btn.dataset.id;
-      const scripts = getSavedScripts();
-      const script = scripts.find((s) => s.id === id);
+      const script = cachedSavedScripts.find((s) => s.id === id);
       if (!script) return;
       setEditorValue(script.content);
-      scriptType.value = script.type;
+      scriptType.value = script.scriptType;
       scriptSaveName.value = script.name;
-      setEditorMode(script.type);
+      setEditorMode(script.scriptType);
       showToast("Script loaded", "success", 3000);
     });
   });
 
   savedScriptsList.querySelectorAll(".delete-saved-script").forEach((btn) => {
-    btn.addEventListener("click", () => {
+    btn.addEventListener("click", async () => {
       const id = btn.dataset.id;
-      const scripts = getSavedScripts().filter((s) => s.id !== id);
-      setSavedScripts(scripts);
-      renderSavedScripts();
-      showToast("Saved script deleted", "info", 3000);
+      try {
+        const res = await fetch(`/api/saved-scripts/${encodeURIComponent(id)}`, { method: "DELETE" });
+        if (!res.ok) throw new Error("Delete failed");
+        cachedSavedScripts = cachedSavedScripts.filter((s) => s.id !== id);
+        renderSavedScripts();
+        showToast("Saved script deleted", "info", 3000);
+      } catch (err) {
+        console.error("Failed to delete script:", err);
+        showToast("Failed to delete script", "error", 3000);
+      }
     });
   });
 }
 
-function saveCurrentScript() {
+async function saveCurrentScript() {
   const name = scriptSaveName.value.trim();
   const content = getEditorValue().trim();
   const type = scriptType.value;
@@ -318,29 +318,38 @@ function saveCurrentScript() {
     return;
   }
 
-  const scripts = getSavedScripts();
-  const existing = scripts.find((s) => s.name.toLowerCase() === name.toLowerCase());
+  const existing = cachedSavedScripts.find((s) => s.name.toLowerCase() === name.toLowerCase());
 
   if (existing) {
     const ok = confirm("A script with this name already exists. Overwrite it?");
     if (!ok) return;
-    existing.content = content;
-    existing.type = type;
-    existing.updatedAt = Date.now();
-  } else {
-    scripts.push({
-      id: `script-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      name,
-      content,
-      type,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    });
   }
 
-  setSavedScripts(scripts);
-  renderSavedScripts();
-  showToast("Script saved", "success", 3000);
+  try {
+    const res = await fetch("/api/saved-scripts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: existing ? existing.id : undefined,
+        name,
+        content,
+        scriptType: type,
+      }),
+    });
+    if (!res.ok) throw new Error("Save failed");
+    const data = await res.json();
+    if (existing) {
+      const idx = cachedSavedScripts.findIndex((s) => s.id === existing.id);
+      if (idx !== -1) cachedSavedScripts[idx] = data.item;
+    } else {
+      cachedSavedScripts.push(data.item);
+    }
+    renderSavedScripts();
+    showToast("Script saved", "success", 3000);
+  } catch (err) {
+    console.error("Failed to save script:", err);
+    showToast("Failed to save script", "error", 3000);
+  }
 }
 
 function triggerLabel(trigger) {
@@ -739,7 +748,7 @@ function renderTemplatePalette() {
 
 checkAuth();
 loadClients();
-renderSavedScripts();
+loadSavedScripts().then(() => renderSavedScripts());
 loadAutoTasks();
 renderTemplatePalette();
 
