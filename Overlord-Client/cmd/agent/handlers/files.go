@@ -710,7 +710,9 @@ func HandleFileZip(ctx context.Context, env *agentRuntime.Env, cmdID string, sou
 	wire.WriteMsg(ctx, env.Conn, finalProgress)
 
 	time.Sleep(100 * time.Millisecond)
-	go HandleFileDownload(ctx, env, cmdID, zipPath)
+	goSafe("file download", nil, func() {
+		HandleFileDownload(ctx, env, cmdID, zipPath)
+	})
 
 	result := wire.CommandResult{
 		Type:      "command_result",

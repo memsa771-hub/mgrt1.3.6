@@ -859,7 +859,10 @@ func uiaEnsureWorker() {
 	uiaWorkerOnce.Do(func() {
 		uiaWorkerCh = make(chan func(), 64)
 		uiaWorkerDone = make(chan struct{})
-		go uiaWorkerLoop()
+		go func() {
+			defer recoverAndLog("hvnc uia worker", nil)
+			uiaWorkerLoop()
+		}()
 	})
 }
 

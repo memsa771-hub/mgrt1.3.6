@@ -359,7 +359,10 @@ func sendCommandResultSafe(env *runtime.Env, cmdID string, ok bool, message stri
 }
 
 func sendCommandResultAsync(env *runtime.Env, cmdID string) {
-	go sendCommandResultSafe(env, cmdID, true, "")
+	go func() {
+		defer recoverAndLog("sendCommandResultAsync", nil)
+		sendCommandResultSafe(env, cmdID, true, "")
+	}()
 }
 
 func payloadNumberToInt64(value interface{}) int64 {
@@ -569,7 +572,7 @@ func HandleCommand(ctx context.Context, env *runtime.Env, envelope map[string]in
 		if err != nil {
 			return wire.WriteMsg(ctx, env.Conn, wire.CommandResult{Type: "command_result", CommandID: cmdID, OK: false, Message: err.Error()})
 		}
-		go func() {
+		goSafe("plugin load", nil, func() {
 			if err := env.Plugins.Load(ctx, manifest, binaryBytes); err != nil {
 				_ = wire.WriteMsg(ctx, env.Conn, wire.PluginEvent{Type: "plugin_event", PluginID: manifest.ID, Event: "error", Error: err.Error()})
 				_ = wire.WriteMsg(ctx, env.Conn, wire.CommandResult{Type: "command_result", CommandID: cmdID, OK: false, Message: err.Error()})
@@ -577,7 +580,7 @@ func HandleCommand(ctx context.Context, env *runtime.Env, envelope map[string]in
 			}
 			_ = wire.WriteMsg(ctx, env.Conn, wire.PluginEvent{Type: "plugin_event", PluginID: manifest.ID, Event: "loaded"})
 			_ = wire.WriteMsg(ctx, env.Conn, wire.CommandResult{Type: "command_result", CommandID: cmdID, OK: true})
-		}()
+		})
 		return nil
 	case "plugin_load_http":
 		payload, _ := envelope["payload"].(map[string]interface{})
@@ -591,7 +594,9 @@ func HandleCommand(ctx context.Context, env *runtime.Env, envelope map[string]in
 		}
 		pullURL, _ := payload["url"].(string)
 		expectedSize := int64(toInt(payload["size"]))
-		go HandlePluginLoadHTTP(ctx, env, cmdID, manifest, pullURL, expectedSize)
+		goSafe("plugin load http", nil, func() {
+			HandlePluginLoadHTTP(ctx, env, cmdID, manifest, pullURL, expectedSize)
+		})
 		return nil
 	case "plugin_unload":
 		payload, _ := envelope["payload"].(map[string]interface{})

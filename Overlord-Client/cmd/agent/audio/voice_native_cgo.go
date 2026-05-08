@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"sort"
 	"strings"
 	"sync"
@@ -298,6 +299,11 @@ func StartVoiceSession(parent context.Context, source string, onCapture func([]b
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[panic] audio capture: %v", r)
+			}
+		}()
 		for {
 			select {
 			case <-s.ctx.Done():
@@ -454,6 +460,11 @@ func StartCaptureOnlySession(parent context.Context, source string, onCapture fu
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[panic] audio capture: %v", r)
+			}
+		}()
 		for {
 			select {
 			case <-s.ctx.Done():

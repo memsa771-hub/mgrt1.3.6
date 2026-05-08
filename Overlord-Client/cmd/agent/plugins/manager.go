@@ -77,6 +77,11 @@ func (m *Manager) Load(ctx context.Context, manifest PluginManifest, binary []by
 			Payload:  payloadVal,
 		}
 		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("[panic] plugin event send: %v", r)
+				}
+			}()
 			sendCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			if err := wire.WriteMsg(sendCtx, m.writer, msg); err != nil {

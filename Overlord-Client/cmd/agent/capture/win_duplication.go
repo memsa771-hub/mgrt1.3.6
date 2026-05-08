@@ -756,7 +756,18 @@ func (s *duplicationState) capture(display int) (*image.RGBA, error) {
 		}
 
 		pitch := int(mapped.Pitch)
-		src := unsafe.Slice(mapped.Bits, pitch*height)
+		if pitch < width*4 {
+			_ = s.dup.UnMapDesktopSurface()
+			_ = s.dup.ReleaseFrame()
+			return nil, fmt.Errorf("dxgi: pitch %d too small for width %d", pitch, width)
+		}
+		totalBytes := pitch * height
+		if totalBytes/height != pitch {
+			_ = s.dup.UnMapDesktopSurface()
+			_ = s.dup.ReleaseFrame()
+			return nil, fmt.Errorf("dxgi: pitch*height overflow (%d * %d)", pitch, height)
+		}
+		src := unsafe.Slice(mapped.Bits, totalBytes)
 		if wantScale {
 			img = convertBGRAScaled(src, pitch, width, height, dstW, dstH, s.desc.Rotation)
 		}
@@ -765,6 +776,9 @@ func (s *duplicationState) capture(display int) (*image.RGBA, error) {
 		}
 		_ = s.dup.UnMapDesktopSurface()
 		_ = s.dup.ReleaseFrame()
+		if img == nil {
+			return nil, errors.New("dxgi: pixel conversion failed (buffer too small)")
+		}
 	} else {
 		img, hr = s.readbackFrame(width, height, s.desc.Rotation, resource,
 			wantScale, dstW, dstH)
@@ -976,7 +990,16 @@ func (s *duplicationState) readbackFrame(width, height int, rotation uint32, res
 	}
 
 	pitch := int(mapped.RowPitch)
-	src := unsafe.Slice((*byte)(mapped.Data), pitch*int(srcDesc.Height))
+	srcH := int(srcDesc.Height)
+	srcW := int(srcDesc.Width)
+	if pitch < srcW*4 {
+		return nil, uintptr(1)
+	}
+	totalBytes := pitch * srcH
+	if totalBytes/srcH != pitch {
+		return nil, uintptr(1)
+	}
+	src := unsafe.Slice((*byte)(mapped.Data), totalBytes)
 	var img *image.RGBA
 	if wantScale {
 		img = convertBGRAScaled(src, pitch, int(srcDesc.Width), int(srcDesc.Height), dstW, dstH, rotation)
@@ -1094,6 +1117,9 @@ func createD3DDevice(adapter *idxgiAdapter1) (*d3d11Device, *d3d11DeviceContext,
 }
 
 func convertBGRA(src []byte, pitch, width, height int, rotation uint32) *image.RGBA {
+	if len(src) < (height-1)*pitch+width*4 {
+		return nil
+	}
 	switch rotation {
 	case dxgiModeRotationRotate90:
 		dst := GetRGBA(height, width)
@@ -1164,6 +1190,9 @@ func convertBGRA(src []byte, pitch, width, height int, rotation uint32) *image.R
 
 func convertBGRAScaled(src []byte, pitch, srcW, srcH, dstW, dstH int, rotation uint32) *image.RGBA {
 	if rotation != dxgiModeRotationIdentity && rotation != 0 {
+		return nil
+	}
+	if len(src) < (srcH-1)*pitch+srcW*4 {
 		return nil
 	}
 	dst := GetRGBA(dstW, dstH)
