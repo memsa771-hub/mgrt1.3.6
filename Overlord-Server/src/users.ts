@@ -296,6 +296,7 @@ if (userCount.count === 0) {
   const config = getConfig();
   const initialUsername = (config.auth.username || "admin").trim() || "admin";
   const initialPassword = config.auth.password;
+  const mustChangePassword = config.auth.passwordIsUserSupplied ? 0 : 1;
 
   logger.info("[users] No users found, creating default admin account");
   const defaultPassword = await Bun.password.hash(initialPassword, {
@@ -305,7 +306,7 @@ if (userCount.count === 0) {
 
   db.prepare(
     "INSERT INTO users (username, password_hash, role, created_at, created_by, must_change_password, client_scope, plugin_scope, can_build, can_upload_files) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-  ).run(initialUsername, defaultPassword, "admin", Date.now(), "system", 1, "all", "all", 1, 1);
+  ).run(initialUsername, defaultPassword, "admin", Date.now(), "system", mustChangePassword, "all", "all", 1, 1);
 
   const createdUser = db
     .prepare("SELECT * FROM users WHERE username = ?")
@@ -316,9 +317,15 @@ if (userCount.count === 0) {
   );
 
   logger.info(`[users] Initial admin account created (username: ${initialUsername})`);
-  logger.warn(
-    "[users] SECURITY WARNING: A default admin account has been created. Sign in and rotate the password immediately. Bootstrap credentials default to admin/admin unless overridden by configuration; the password is not logged.",
-  );
+  if (mustChangePassword) {
+    logger.warn(
+      "[users] SECURITY WARNING: A default admin account has been created with the fallback password. Sign in and rotate the password immediately. Bootstrap credentials default to admin/admin unless overridden by configuration; the password is not logged.",
+    );
+  } else {
+    logger.info(
+      "[users] Initial admin account uses the operator-supplied password; first-login rotation is not required.",
+    );
+  }
 }
 
 export function getUserById(id: number): User | null {

@@ -8,6 +8,7 @@ export interface Config {
   auth: {
     username: string;
     password: string;
+    passwordIsUserSupplied: boolean;
     jwtSecret: string;
     agentToken: string;
   };
@@ -80,6 +81,7 @@ const DEFAULT_CONFIG: Config = {
   auth: {
     username: "admin",
     password: "admin",
+    passwordIsUserSupplied: false,
     jwtSecret: "",
     agentToken: "",
   },
@@ -296,11 +298,15 @@ export function loadConfig(): Config {
 
   const passwordFromEnv = process.env.OVERLORD_PASS;
   const passwordFromConfig = fileConfig.auth?.password;
+  const passwordFromSaved = savedSecrets.auth?.bootstrapPassword;
   let finalBootstrapPassword =
     passwordFromEnv ||
     passwordFromConfig ||
-    savedSecrets.auth?.bootstrapPassword ||
+    passwordFromSaved ||
     DEFAULT_CONFIG.auth.password;
+  const passwordIsUserSupplied =
+    Boolean(passwordFromEnv) ||
+    Boolean(passwordFromConfig);
 
   const keywordsEnv = process.env.OVERLORD_NOTIFICATION_KEYWORDS;
   const keywordsFromEnv = keywordsEnv
@@ -317,6 +323,7 @@ export function loadConfig(): Config {
         fileConfig.auth?.username ||
         DEFAULT_CONFIG.auth.username,
       password: finalBootstrapPassword,
+      passwordIsUserSupplied,
       jwtSecret: finalJwtSecret,
       agentToken: finalAgentToken,
     },
