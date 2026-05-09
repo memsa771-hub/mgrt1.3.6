@@ -132,6 +132,26 @@ function getClientCard(clientId) {
   return document.querySelector(`article[data-id="${selectorId}"]`);
 }
 
+window.__uninstallingClientIds = window.__uninstallingClientIds || new Set();
+
+function flipFallAndRemove(clientId, { delayMs = 0 } = {}) {
+  const card = getClientCard(clientId);
+  if (!card || card.classList.contains("card-uninstalling")) return;
+  window.__uninstallingClientIds.add(clientId);
+  if (delayMs > 0) card.style.animationDelay = `${delayMs}ms`;
+  card.classList.add("card-uninstalling");
+
+  let removed = false;
+  const cleanup = () => {
+    if (removed) return;
+    removed = true;
+    card.remove();
+    setTimeout(() => window.__uninstallingClientIds.delete(clientId), 2500);
+  };
+  card.addEventListener("animationend", cleanup, { once: true });
+  setTimeout(cleanup, 1100 + delayMs + 400);
+}
+
 function openTagNoteEditor(clientId, currentTag, currentNote) {
   return new Promise((resolve) => {
     const overlay = document.createElement("div");
@@ -1440,9 +1460,16 @@ menu.addEventListener("click", async (e) => {
     markManualDisconnect(contextCard);
   }
 
+  if (action === "uninstall") {
+    flipFallAndRemove(contextCard);
+  }
+
   const ok = await sendCommand(contextCard, action);
   if (ok) {
-    setTimeout(() => loadWithOptions({ force: true }), 400);
+    // Wait for the flip-fall to finish before refreshing the grid, otherwise
+    // the reload would yank the animating card from layout.
+    const refreshDelay = action === "uninstall" ? 1300 : 400;
+    setTimeout(() => loadWithOptions({ force: true }), refreshDelay);
   }
   closeMenu(clearContext);
 });

@@ -1198,6 +1198,64 @@ article.card[data-bookmarked="true"] {
   opacity: 0;
 }
 
+@keyframes cardFlipFall {
+  0% {
+    opacity: 1;
+    transform:
+      perspective(1400px) rotateX(0) rotateY(0) rotateZ(0)
+      translate3d(0, 0, 0) scale(1);
+    filter: brightness(1) saturate(1);
+    box-shadow: 0 0 0 rgba(0, 0, 0, 0);
+  }
+  18% {
+    opacity: 1;
+    transform:
+      perspective(1400px) rotateX(6deg) rotateY(-12deg) rotateZ(-2deg)
+      translate3d(-4px, -16px, 40px) scale(1.04);
+    filter: brightness(1.18) saturate(1.15);
+    box-shadow:
+      0 30px 60px rgba(0, 0, 0, 0.55),
+      0 0 32px rgba(244, 63, 94, 0.35);
+  }
+  55% {
+    opacity: 1;
+    transform:
+      perspective(1400px) rotateX(35deg) rotateY(360deg) rotateZ(12deg)
+      translate3d(40px, 60px, -120px) scale(0.92);
+    filter: brightness(0.9) saturate(0.9);
+    box-shadow:
+      0 40px 70px rgba(0, 0, 0, 0.6),
+      0 0 22px rgba(244, 63, 94, 0.25);
+  }
+  100% {
+    opacity: 0;
+    transform:
+      perspective(1400px) rotateX(75deg) rotateY(720deg) rotateZ(38deg)
+      translate3d(140px, 110vh, -400px) scale(0.5);
+    filter: brightness(0.45) saturate(0.6);
+    box-shadow: 0 0 0 rgba(0, 0, 0, 0);
+  }
+}
+
+.card-uninstalling {
+  animation: cardFlipFall 1100ms cubic-bezier(0.55, 0.06, 0.68, 0.19) forwards;
+  transform-origin: center center;
+  transform-style: preserve-3d;
+  backface-visibility: hidden;
+  pointer-events: none;
+  position: relative;
+  z-index: 5;
+  will-change: transform, opacity, filter;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card-uninstalling {
+    animation: none;
+    opacity: 0;
+    transition: opacity 220ms ease;
+  }
+}
+
 .ripple {
   position: relative;
   overflow: hidden;

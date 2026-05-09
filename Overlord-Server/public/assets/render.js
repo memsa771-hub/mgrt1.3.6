@@ -269,10 +269,14 @@ export function createRenderer({
 
     const hadCards = grid.querySelectorAll("article[data-id]").length > 0;
 
+    const uninstallingIds = window.__uninstallingClientIds;
+
     items.forEach((client) => {
       seen.add(client.id);
+      if (uninstallingIds && uninstallingIds.has(client.id)) return;
       const existing = grid.querySelector(`article[data-id="${client.id}"]`);
       if (existing) {
+        if (existing.classList.contains("card-uninstalling")) return;
         const digest = cardDigest(client);
         if (existing._cardDigest === digest) return;
         existing._cardDigest = digest;
@@ -283,7 +287,7 @@ export function createRenderer({
     });
 
     Array.from(grid.querySelectorAll("article[data-id]"))
-      .filter((el) => !seen.has(el.dataset.id))
+      .filter((el) => !seen.has(el.dataset.id) && !el.classList.contains("card-uninstalling"))
       .forEach((el) => el.remove());
 
     if (reorder) {
