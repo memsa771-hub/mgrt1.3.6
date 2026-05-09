@@ -5,7 +5,7 @@ import { fileURLToPath } from "url";
 import path from "path";
 import fs from "fs/promises";
 import { existsSync } from "node:fs";
-import { upsertClientRow, setOnlineState, listClients, markAllClientsOffline, getBuild, getBuildByTag, getAllBuilds, deleteExpiredBuilds, deleteBuild, getNotificationScreenshot, deleteClientRow, getClientIp, banIp, isIpBanned, clientExists, deleteExpiredSharedFiles, getChatHistory, insertChatMessage, getOnlineClientCountForUser, deleteExpiredChatMessages, recordBuildClaim, getClientMetricsSummary, pruneOldNotifications } from "./db";
+import { upsertClientRow, setOnlineState, listClients, markAllClientsOffline, getBuild, getAllBuilds, deleteExpiredBuilds, deleteBuild, getNotificationScreenshot, deleteClientRow, getClientIp, banIp, isIpBanned, clientExists, deleteExpiredSharedFiles, getChatHistory, insertChatMessage, getOnlineClientCountForUser, deleteExpiredChatMessages, recordBuildClaim, getClientMetricsSummary, pruneOldNotifications } from "./db";
 import { handleFrame, handleHello, handlePing, handlePong } from "./wsHandlers";
 import { getMessageByteLength, getMaxPayloadLimit, isAllowedClientMessageType } from "./wsValidation";
 import { ClientInfo, ClientRole } from "./types";
@@ -512,30 +512,30 @@ async function startServer() {
     registration: {},
   };
 
-  function handleBuildTagConnection(clientId: string, buildTagValue: string, keyFingerprint: string) {
-    if (!buildTagValue) return;
-    const build = getBuildByTag(buildTagValue);
-    if (!build || !build.builtByUserId) return;
+  function handleBuildTagConnection(
+    clientId: string,
+    buildId: string | null,
+    builtByUserId: number | undefined,
+    keyFingerprint: string,
+  ) {
+    if (!buildId || !builtByUserId) return;
 
-    if (build.blocked) return;
-
-    const isFirstClaim = recordBuildClaim(build.id, keyFingerprint);
+    const isFirstClaim = recordBuildClaim(buildId, keyFingerprint);
     if (!isFirstClaim) return;
 
-    const userId = build.builtByUserId;
-    const user = getUserById(userId);
+    const user = getUserById(builtByUserId);
     if (!user) return;
 
     if (user.role === "admin") return;
 
-    const currentScope = getUserClientAccessScope(userId);
+    const currentScope = getUserClientAccessScope(builtByUserId);
     if (currentScope === "none") {
-      setUserClientAccessScope(userId, "allowlist");
+      setUserClientAccessScope(builtByUserId, "allowlist");
     }
 
     if (currentScope === "none" || currentScope === "allowlist") {
-      setUserClientAccessRule(userId, clientId, "allow");
-      logger.info(`[build-tag] Auto-added client ${clientId} to user ${user.username}'s allowlist (build: ${build.id.substring(0, 8)}, fp: ${keyFingerprint.substring(0, 12)}...)`);
+      setUserClientAccessRule(builtByUserId, clientId, "allow");
+      logger.info(`[build-tag] Auto-added client ${clientId} to user ${user.username}'s allowlist (build: ${buildId.substring(0, 8)}, fp: ${keyFingerprint.substring(0, 12)}...)`);
     }
   }
 

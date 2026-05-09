@@ -5,6 +5,7 @@ import { v4 as uuidv4 } from "uuid";
 import { saveBuild } from "../db";
 import { logger } from "../logger";
 import { getConfig } from "../config";
+import { signBuildToken } from "./build-signing";
 import { ensureDataDir } from "../paths";
 import * as buildManager from "../build/buildManager";
 import type { BuildStream } from "../build/types";
@@ -322,8 +323,13 @@ export async function startBuildProcess(
       sendToStream({ type: "output", text: "Mutex: disabled\n", level: "info" });
     }
 
-    const buildTag = uuidv4();
-    sendToStream({ type: "output", text: `Build tag: ${buildTag}\n`, level: "info" });
+    const buildTag = await signBuildToken({
+      v: 1,
+      bid: buildId,
+      uid: config.builtByUserId ?? null,
+      iat: Math.floor(Date.now() / 1000),
+    });
+    sendToStream({ type: "output", text: `Build tag: signed (bid=${buildId.substring(0, 8)})\n`, level: "info" });
 
     if (config.outputName) {
       sendToStream({ type: "output", text: `Custom output name: ${config.outputName}\n`, level: "info" });

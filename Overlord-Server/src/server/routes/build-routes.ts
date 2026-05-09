@@ -24,6 +24,7 @@ import { logger } from "../../logger";
 import { normalizeClientOs } from "../deploy-utils";
 import { canUserBuild, recordBuildStart, recordBuildEnd } from "../../build-rate-limit";
 import { getConfig } from "../../config";
+import { addBuildToBanlist, removeBuildFromBanlist } from "../build-signing";
 import path from "path";
 import fs from "fs";
 import { resolveRuntimeRoot } from "../runtime-paths";
@@ -550,6 +551,12 @@ export async function handleBuildRoutes(
       const ok = setBuildBlocked(buildId, blocked);
       if (!ok) {
         return Response.json({ error: "Build not found" }, { status: 404 });
+      }
+
+      if (blocked) {
+        addBuildToBanlist(buildId);
+      } else {
+        removeBuildFromBanlist(buildId);
       }
 
       let disconnected = 0;

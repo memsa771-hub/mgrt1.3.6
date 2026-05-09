@@ -75,6 +75,9 @@ export interface Config {
     maxConcurrentPerUser: number;
     globalMaxConcurrent: number;
   };
+  buildSigning: {
+    banlist: string[];
+  };
 }
 
 const DEFAULT_CONFIG: Config = {
@@ -148,6 +151,9 @@ const DEFAULT_CONFIG: Config = {
     maxConcurrentPerUser: 1,
     globalMaxConcurrent: 3,
   },
+  buildSigning: {
+    banlist: [],
+  },
 };
 
 type SaveSecrets = {
@@ -156,6 +162,15 @@ type SaveSecrets = {
     agentToken?: string;
     bootstrapPassword?: string;
   };
+  buildSigning?: {
+    privateKey?: string;
+    publicKey?: string;
+  };
+};
+
+export type BuildSigningSecrets = {
+  privateKey: string;
+  publicKey: string;
 };
 
 function generateRandomSecret(length = 48): string {
@@ -520,6 +535,11 @@ export function loadConfig(): Config {
         fileConfig.buildRateLimit?.globalMaxConcurrent ||
         DEFAULT_CONFIG.buildRateLimit.globalMaxConcurrent,
     },
+    buildSigning: {
+      banlist: Array.isArray(fileConfig.buildSigning?.banlist)
+        ? fileConfig.buildSigning.banlist.filter((v: unknown): v is string => typeof v === "string" && v.length > 0)
+        : [...DEFAULT_CONFIG.buildSigning.banlist],
+    },
   };
 
   if (saveChanged) {
@@ -820,8 +840,51 @@ export async function updateBuildRateLimitConfig(
   return next;
 }
 
+export function getBuildSigningSecrets(): BuildSigningSecrets | null {
+  const dataDir = ensureDataDir();
+  const savePath = resolve(dataDir, "save.json");
+  const saved = loadSaveSecrets(savePath);
+  const priv = saved.buildSigning?.privateKey;
+  const pub = saved.buildSigning?.publicKey;
+  if (typeof priv === "string" && priv && typeof pub === "string" && pub) {
+    return { privateKey: priv, publicKey: pub };
+  }
+  return null;
+}
+
+export function setBuildSigningSecrets(secrets: BuildSigningSecrets): void {
+  const dataDir = ensureDataDir();
+  const savePath = resolve(dataDir, "save.json");
+  const saved = loadSaveSecrets(savePath);
+  saved.buildSigning = { privateKey: secrets.privateKey, publicKey: secrets.publicKey };
+  persistSaveSecrets(savePath, saved);
+}
+
+export function getBuildBanlist(): string[] {
+  return getConfig().buildSigning.banlist;
+}
+
+export function setBuildBanlist(banlist: string[]): void {
+  const current = getConfig();
+  const cleaned = Array.from(
+    new Set(banlist.filter((v) => typeof v === "string" && v.length > 0)),
+  );
+  const next: Config["buildSigning"] = { banlist: cleaned };
+
+  configCache = { ...current, buildSigning: next };
+
+  const fileConfig = readFileConfigForUpdate();
+  fileConfig.buildSigning = next;
+  try {
+    writeFileSync(getPersistentConfigPath(), JSON.stringify(fileConfig, null, 2));
+  } catch (err) {
+    logger.warn("Failed to persist buildSigning banlist", err);
+  }
+}
+
 export function getExportableConfig(serverVersion: string): Record<string, unknown> {
   const config = getConfig();
+  const buildSigningSecrets = getBuildSigningSecrets();
   return {
     _meta: {
       exportedAt: new Date().toISOString(),
@@ -840,6 +903,11 @@ export function getExportableConfig(serverVersion: string): Record<string, unkno
     chat: config.chat,
     registration: config.registration,
     buildRateLimit: config.buildRateLimit,
+    buildSigning: {
+      privateKey: buildSigningSecrets?.privateKey || "",
+      publicKey: buildSigningSecrets?.publicKey || "",
+      banlist: config.buildSigning.banlist,
+    },
   };
 }
 
@@ -938,6 +1006,36 @@ export async function importFullConfig(data: Record<string, any>): Promise<{ app
         warnings.push("Auth secrets may be overridden by JWT_SECRET / OVERLORD_AGENT_TOKEN environment variables.");
       }
     }
+  }
+
+  if (data.buildSigning && typeof data.buildSigning === "object") {
+    const incomingPriv = typeof data.buildSigning.privateKey === "string" ? data.buildSigning.privateKey : "";
+    const incomingPub = typeof data.buildSigning.publicKey === "string" ? data.buildSigning.publicKey : "";
+    let importedKeypair = false;
+
+    if (incomingPriv && incomingPub) {
+      const dataDir = ensureDataDir();
+      const savePath = resolve(dataDir, "save.json");
+      const savedSecrets = loadSaveSecrets(savePath);
+      savedSecrets.buildSigning = { privateKey: incomingPriv, publicKey: incomingPub };
+      persistSaveSecrets(savePath, savedSecrets);
+      importedKeypair = true;
+    } else if (incomingPriv || incomingPub) {
+      warnings.push("buildSigning import skipped: both privateKey and publicKey are required.");
+    }
+
+    if (Array.isArray(data.buildSigning.banlist)) {
+      const cleaned = data.buildSigning.banlist.filter(
+        (v: unknown): v is string => typeof v === "string" && v.length > 0,
+      );
+      setBuildBanlist(cleaned);
+    }
+
+    applied.push(
+      importedKeypair
+        ? "buildSigning (keypair updated in save.json — restart required, banlist applied)"
+        : "buildSigning (banlist applied)",
+    );
   }
 
   return { applied, warnings };
