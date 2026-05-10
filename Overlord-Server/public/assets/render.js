@@ -617,7 +617,7 @@ export function createRenderer({
       <button class="bookmark-btn cv-star ${client.bookmarked ? "is-on" : ""}" data-id="${escapeHtml(client.id)}" title="${client.bookmarked ? "Remove bookmark" : "Bookmark"}">
         <i class="fa-${client.bookmarked ? "solid" : "regular"} fa-star"></i>
       </button>
-      <div class="cv-thumb-wrap">${thumbHtml(client, { width: 126, height: 80, small: false })}</div>
+      <div class="cv-thumb-wrap">${thumbHtml(client, { width: 168, height: 96, small: false })}</div>
       <div class="cv-primary">
         <div class="cv-name-line">
           ${statusDot(client)}
@@ -686,7 +686,7 @@ export function createRenderer({
           <i class="fa-${client.bookmarked ? "solid" : "regular"} fa-star"></i>
         </button>
       </td>
-      <td class="cv-td-thumb">${thumbHtml(client, { width: 56, height: 35, small: true })}</td>
+      <td class="cv-td-thumb">${thumbHtml(client, { width: 80, height: 50, small: true })}</td>
       <td class="cv-td-client">
         <div class="cv-tcell-client">
           <span class="cv-flag">${countryToFlag(client.country)}</span>
