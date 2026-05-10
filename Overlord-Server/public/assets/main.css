@@ -2172,7 +2172,8 @@ tbody tr:hover {
   background: #64748b;
 }
 
-.cv-flag { font-size: 14px; line-height: 1; }
+.cv-flag { display: inline-flex; align-items: center; flex-shrink: 0; font-size: 14px; line-height: 1; }
+.fi { display: inline-block; width: 24px; height: 18px; background-size: cover; background-position: center; border-radius: 2px; vertical-align: middle; }
 .cv-name {
   font-size: 14px;
   font-weight: 600;
