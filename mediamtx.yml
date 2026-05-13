@@ -30,10 +30,19 @@ webrtcAllowOrigins: ['*']
 # punch through to MediaMTX directly without TURN.
 webrtcLocalUDPAddress: :8189
 webrtcLocalTCPAddress: :8189
-# Optional: set OVERLORD_WEBRTC_PUBLIC_HOST to your public IP/hostname and
-# uncomment to add explicit ICE candidates (needed behind NAT).
-# webrtcAdditionalHosts:
-#   - ${OVERLORD_WEBRTC_PUBLIC_HOST}
+# Always advertise the loopback as an ICE candidate.
+#
+# • Linux (host networking): MediaMTX already sees every real interface, so
+#   this is only used by browsers running on the server itself.
+# • Windows / macOS (bridge networking): the container can only see the
+#   docker bridge IP, which the host can't reach. Browsers running on the
+#   docker host connect to 127.0.0.1:8189 instead, which Docker Desktop
+#   port-publishes into the MediaMTX container.
+#
+# For LAN access from a different machine, add that machine's LAN IP (or
+# the server's reachable public IP) here, e.g.:
+#   webrtcAdditionalHosts: ['127.0.0.1', '192.168.1.42']
+webrtcAdditionalHosts: ['127.0.0.1']
 
 paths:
   # Accept any path created by a publisher (WHIP). Overlord uses

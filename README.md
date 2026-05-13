@@ -20,6 +20,7 @@ Docker is the easiest way to run it.
   - [macOS](#macos)
 - [No Docker (.bat / .sh)](#no-docker-bat--sh)
 - [Production Package Scripts](#production-package-scripts)
+- [WebRTC Streaming](#webrtc-streaming)
 - [Docker Notes (TLS, reverse proxy, cache)](#docker-notes-tls-reverse-proxy-cache)
 
 ---
@@ -338,6 +339,66 @@ Linux / macOS:
 ```
 
 Output: `release/prod-package/`
+
+---
+
+## WebRTC Streaming
+
+The remote desktop viewer has a **Transport** dropdown with three modes:
+
+- **Canvas** (default): H.264 / JPEG / block frames over the existing WebSocket, decoded into a `<canvas>`. Highest latency, works anywhere the WS does.
+- **WebRTC P2P**: browser ↔ agent direct. The server only relays SDP and ICE candidates over the existing WS — MediaMTX is not involved. Lowest latency. Fails when both sides are behind aggressive symmetric NAT.
+- **WebRTC Relayed**: agent publishes to a MediaMTX sidecar via WHIP, browser plays via WHEP. The server proxies signaling so the existing JWT auth + per-client RBAC still apply. Lowest-effort fallback when P2P can't punch through.
+
+### Building agents with WebRTC
+
+WebRTC is **opt-in per agent build**. In the builder UI, tick the **WebRTC** checkbox before clicking Build. Without it, the Pion stack (~6 MB of Go modules) is not compiled in — any WebRTC start attempt from the operator returns `webrtc support not compiled in` and the viewer falls back to Canvas. The Canvas path always works regardless of the build setting.
+
+The build tag (`overlord_webrtc`) is also available if you build agents outside the UI:
+
+```bash
+go build -tags overlord_webrtc ./cmd/agent
+```
+
+### MediaMTX sidecar
+
+Compose starts an `overlord-mediamtx` service for Relayed mode. It needs:
+
+- Port `8189/udp` and `8189/tcp` reachable from operators (WebRTC ICE traffic). The Windows / macOS compose publishes these; Linux uses host networking and shares the host's interfaces directly.
+- No auth config — the Overlord server proxies every WHIP/WHEP request through `/api/webrtc/...` and enforces the existing operator JWT + RBAC there.
+
+If you only ever want P2P, you can comment out the `mediamtx:` service in your compose file — only Relayed mode depends on it.
+
+### LAN / public access
+
+By default MediaMTX advertises `127.0.0.1` as an ICE candidate, which is enough for operators running their browser on the same machine as Docker.
+
+For viewers on a different machine:
+
+- **Linux** (host networking): nothing to configure — MediaMTX sees the host's eth0/wlan0 and gathers those candidates automatically.
+- **Windows / macOS** (bridge networking): set `OVERLORD_WEBRTC_ADDITIONAL_HOSTS` to a comma-separated list including the server's reachable LAN or public IP. Either export it in your shell, or add it to a `.env` file next to the compose file:
+
+  ```
+  OVERLORD_WEBRTC_ADDITIONAL_HOSTS=127.0.0.1,192.168.1.42
+  ```
+
+  Then `docker compose -f docker-compose.windows.yml up -d mediamtx` to apply.
+
+### Advanced MediaMTX customization
+
+The compose file passes a minimal set of `MTX_*` environment variables to MediaMTX — enough for Overlord to work. To change anything else (codecs, paths, ICE servers, etc.), either:
+
+- Add more `MTX_*` variables to the `mediamtx` service's `environment:` block (every option in MediaMTX's docs is supported as an env var), or
+- Provide a full `mediamtx.yml` via a bind mount:
+
+  ```yaml
+  mediamtx:
+    # ...existing config...
+    volumes:
+      - ./mediamtx.yml:/mediamtx.yml:ro
+  ```
+
+  Make sure the file exists on the host *before* the container starts — Docker will otherwise auto-create an empty directory at that path and fail with "not a directory".
 
 ---
 

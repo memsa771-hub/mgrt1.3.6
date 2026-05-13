@@ -47,9 +47,6 @@ services:
       # Host networking on Linux → localhost works. WebRTC is opt-in; leave the
       # toggle in the UI off if MediaMTX is not running.
       OVERLORD_MEDIAMTX_URL: ${OVERLORD_MEDIAMTX_URL:-http://localhost:8889}
-      # Public address advertised to browsers/agents for ICE. Defaults to the
-      # request host (Bun rewrites the WHEP candidate list when needed).
-      OVERLORD_WEBRTC_PUBLIC_HOST: ${OVERLORD_WEBRTC_PUBLIC_HOST:-}
     volumes:
       # overlord-data also caches downloaded cross-compile toolchains
       # under /app/data/toolchains, fetched on first agent build for a
@@ -77,14 +74,27 @@ services:
   mediamtx:
     image: bluenviron/mediamtx:latest
     container_name: overlord-mediamtx
-    # Share the host network so WebRTC ICE UDP candidates use the host's
-    # interfaces directly. Same trade-off as the main service.
+    # Share the host network so WebRTC ICE candidates use the host's real
+    # interfaces directly — no extra config needed for local or LAN browsers.
     network_mode: host
     restart: unless-stopped
-    volumes:
-      - ./mediamtx.yml:/mediamtx.yml:ro
     environment:
-      MTX_WEBRTCADDITIONALHOSTS: ${OVERLORD_WEBRTC_PUBLIC_HOST:-}
+      # Disable every protocol except WebRTC. The Overlord server proxies all
+      # WHIP/WHEP signaling and enforces auth itself, so MediaMTX doesn't
+      # need RTSP/RTMP/HLS/SRT listeners.
+      MTX_RTSP: "no"
+      MTX_RTMP: "no"
+      MTX_HLS: "no"
+      MTX_SRT: "no"
+      # ICE on fixed ports so the compose / host firewall has a single target.
+      MTX_WEBRTCLOCALUDPADDRESS: ":8189"
+      MTX_WEBRTCLOCALTCPADDRESS: ":8189"
+      # Advertise 127.0.0.1 as an ICE candidate. Always required on Windows /
+      # macOS (bridge networking); harmless on Linux (host networking). To
+      # allow viewers on a different machine, override this with a comma-
+      # separated list including the host's LAN/public IP, e.g.:
+      #   OVERLORD_WEBRTC_ADDITIONAL_HOSTS=127.0.0.1,192.168.1.42
+      MTX_WEBRTCADDITIONALHOSTS: ${OVERLORD_WEBRTC_ADDITIONAL_HOSTS:-127.0.0.1}
 
 volumes:
   overlord-data:

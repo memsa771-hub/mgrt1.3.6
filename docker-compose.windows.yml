@@ -43,7 +43,6 @@ services:
       OVERLORD_FILE_UPLOAD_PULL_TTL_MS: ${OVERLORD_FILE_UPLOAD_PULL_TTL_MS:-1800000}
       # WebRTC: Bun reaches MediaMTX via the docker service name on bridge net.
       OVERLORD_MEDIAMTX_URL: ${OVERLORD_MEDIAMTX_URL:-http://mediamtx:8889}
-      OVERLORD_WEBRTC_PUBLIC_HOST: ${OVERLORD_WEBRTC_PUBLIC_HOST:-}
     depends_on:
       - mediamtx
     volumes:
@@ -77,10 +76,21 @@ services:
       # outside world (browser + agent), so publish 8189.
       - "8189:8189/udp"
       - "8189:8189/tcp"
-    volumes:
-      - ./mediamtx.yml:/mediamtx.yml:ro
     environment:
-      MTX_WEBRTCADDITIONALHOSTS: ${OVERLORD_WEBRTC_PUBLIC_HOST:-}
+      # Disable every protocol except WebRTC. The Overlord server proxies all
+      # WHIP/WHEP signaling and enforces auth itself.
+      MTX_RTSP: "no"
+      MTX_RTMP: "no"
+      MTX_HLS: "no"
+      MTX_SRT: "no"
+      # Fixed ICE ports (matched by the port-publish above).
+      MTX_WEBRTCLOCALUDPADDRESS: ":8189"
+      MTX_WEBRTCLOCALTCPADDRESS: ":8189"
+      # Advertise 127.0.0.1 as an ICE candidate so browsers on the docker
+      # host can reach MediaMTX through the published port. For viewers on
+      # a different machine, override with the host's LAN/public IP, e.g.:
+      #   OVERLORD_WEBRTC_ADDITIONAL_HOSTS=127.0.0.1,192.168.1.42
+      MTX_WEBRTCADDITIONALHOSTS: ${OVERLORD_WEBRTC_ADDITIONAL_HOSTS:-127.0.0.1}
 
 volumes:
   overlord-data:
