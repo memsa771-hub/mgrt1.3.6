@@ -1046,6 +1046,82 @@ The SSE stream keeps itself alive with a comment heartbeat every 25 s, which wor
 
 ---
 
+## 12) Static-agent plugin loading (Linux subprocess shim)
+
+Linux agents are compiled as fully static musl binaries for maximum portability
+(runs on any Linux regardless of glibc version or distribution).  Fully static
+binaries cannot call `dlopen`, which is normally used to load `.so` plugins in-process.
+
+Overlord works around this with an embedded **plugin host shim** — a small,
+dynamically-linked C binary compiled at agent-build time and embedded inside the
+agent via `//go:embed`.  When a plugin is loaded the agent:
+
+1. Writes the `.so` to an anonymous in-memory file (`memfd_create`).
+2. Writes the embedded shim to a second memfd.
+3. Creates a `socketpair` for bidirectional IPC.
+4. `forkexec`s the shim, passing the two fd numbers as argv.
+5. The shim calls `dlopen("/proc/self/fd/<so_fd>")` normally (it is dynamic, so this works).
+6. The agent and shim exchange events over the socket for the lifetime of the plugin.
+
+The shim itself is **never committed to the repository as a binary**.  It is compiled
+fresh from `Overlord-Client/cmd/agent/plugins/plugin_host/plugin_host.c` every time
+an agent is built via the Overlord UI.  Users can read the source and verify it
+before building.
+
+### How the shim is compiled
+
+`build-process.ts` inserts a compilation step before `go build` for every Linux CGO
+agent build:
+
+| Target arch | Compiler used | Linked against |
+|-------------|---------------|----------------|
+| `linux-amd64` | native `cc` (Debian clang, from build container) | glibc — works on Ubuntu, Debian, RHEL, etc. |
+| `linux-arm64` | `aarch64-linux-musl-gcc` (musl cross-compiler) | musl — works on Alpine and musl-based systems |
+| `linux-armv7` | `armv7l-linux-musleabihf-gcc` | musl |
+
+The compiled binary is written to
+`Overlord-Client/cmd/agent/plugins/plugin_host/plugin_host_<arch>` and picked up
+by `//go:embed`.  If compilation fails (e.g. the cross-compiler is not yet
+downloaded), a warning is logged and the agent falls back to attempting direct
+`dlopen` — which will fail on static builds but does not break the build itself.
+
+### Compatibility
+
+| Target system | Plugin support |
+|---------------|----------------|
+| **glibc Linux (Ubuntu, Debian, Fedora, RHEL, …)** | **Full** — shim compiled with native glibc clang |
+| musl Linux (Alpine) | Full for arm64/armv7; amd64 shim is glibc-linked, so plugins require a glibc compat layer |
+| Non-Linux (Windows, macOS) | Unchanged — Windows uses in-memory PE loader, macOS uses temp-file dlopen |
+
+### Writing plugins for static-agent targets
+
+**No changes are required to plugin source code.**  The plugin ABI (`PluginOnLoad`,
+`PluginOnEvent`, `PluginOnUnload`, `PluginGetRuntime`) is identical whether the
+agent uses in-process `dlopen` or the subprocess shim.  The only constraint is
+that the plugin `.so` must be compiled with the **same libc** as the shim:
+
+- For glibc amd64 targets: compile the plugin with `gcc` or `clang` on a glibc system.
+- For musl arm64/armv7 targets: compile the plugin with the musl cross-compilers.
+
+### IPC protocol (for plugin authors / contributors)
+
+The agent and shim communicate over a `SOCK_STREAM` Unix socketpair using a
+simple length-prefixed binary protocol.  Each message is:
+
+```
+[4-byte LE total-payload-length][1-byte message-type][payload bytes…]
+```
+
+| Direction | Type | Meaning |
+|-----------|------|---------|
+| agent → shim | `0x01` LOAD | `hostInfo` bytes; shim calls `PluginOnLoad` |
+| agent → shim | `0x02` EVENT | `[u16le evLen][event][u32le plLen][payload]`; shim calls `PluginOnEvent` |
+| agent → shim | `0x03` UNLOAD | Shim calls `PluginOnUnload` and exits |
+| shim → agent | `0x10` CALLBACK | `[u16le evLen][event][u32le plLen][payload]`; forwarded to server |
+| shim → agent | `0x11` READY | Runtime string (e.g. `"c"`); sent after successful `dlopen` |
+| shim → agent | `0x12` ERR | Error string; sent instead of READY if `dlopen` or symbol resolution fails |
+| shim → agent | `0x13` LOAD_RESULT | `[u8: 0=ok, 1=error]`; sent after `PluginOnLoad` returns |
+
 ## Plugin Signing
 
 Plugins can be cryptographically signed with Ed25519 keys. The server verifies signatures on upload and displays trust status in the dashboard. Loading unsigned or untrusted plugins requires explicit confirmation.
