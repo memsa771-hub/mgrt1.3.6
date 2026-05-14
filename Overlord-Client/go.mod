@@ -13,6 +13,7 @@ require (
 
 require (
 	github.com/Kirizu-Official/windows-camera-go v0.2.0
+	github.com/UserExistsError/conpty v0.1.4
 	github.com/gen2brain/malgo v0.11.24
 	github.com/gen2brain/shm v0.1.0
 	github.com/jezek/xgb v1.1.1

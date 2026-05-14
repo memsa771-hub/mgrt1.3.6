@@ -207,6 +207,27 @@ if (hljsBuild.success) {
 }
 rmSync(hljsTmp, { force: true });
 
+/* ── xterm.js ────────────────────────────────────────────────────── */
+
+console.log("Copying xterm.js ...");
+const xtermRoot = path.join(NM, "@xterm");
+copyFile(
+  path.join(xtermRoot, "xterm", "lib", "xterm.mjs"),
+  path.join(VENDOR, "xterm", "xterm.mjs"),
+);
+copyFile(
+  path.join(xtermRoot, "xterm", "css", "xterm.css"),
+  path.join(VENDOR, "xterm", "xterm.css"),
+);
+copyFile(
+  path.join(xtermRoot, "addon-fit", "lib", "addon-fit.mjs"),
+  path.join(VENDOR, "xterm", "addon-fit.mjs"),
+);
+copyFile(
+  path.join(xtermRoot, "addon-web-links", "lib", "addon-web-links.mjs"),
+  path.join(VENDOR, "xterm", "addon-web-links.mjs"),
+);
+
 /* ── ansi-to-html (bundle for ESM import) ────────────────────────── */
 
 console.log("Bundling ansi-to-html ...");

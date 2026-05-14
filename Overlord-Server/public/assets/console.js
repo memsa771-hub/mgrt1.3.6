@@ -1,33 +1,72 @@
-import { ansiToHtml } from "./ansi.js";
+import { Terminal } from "/vendor/xterm/xterm.mjs";
+import { FitAddon } from "/vendor/xterm/addon-fit.mjs";
+import { WebLinksAddon } from "/vendor/xterm/addon-web-links.mjs";
 import { encodeMsgpack, decodeMsgpack } from "./msgpack-helpers.js";
 import { checkFeatureAccess } from "./feature-gate.js";
-const outputEl = document.getElementById("console-output");
+
+const containerEl = document.getElementById("terminal");
 const statusPill = document.getElementById("status-pill");
 const clientLabel = document.getElementById("client-label");
 const hostLabel = document.getElementById("host-label");
 const userLabel = document.getElementById("user-label");
 const osLabel = document.getElementById("os-label");
-const form = document.getElementById("console-form");
-const input = document.getElementById("console-input");
-const ctrlcBtn = document.getElementById("ctrlc-btn");
+const reconnectBtn = document.getElementById("reconnect-btn");
+const clearBtn = document.getElementById("clear-btn");
 
 const clientId = decodeURIComponent(
   location.pathname.split("/").filter(Boolean)[0] || "",
 );
 const wsProto = location.protocol === "https:" ? "wss" : "ws";
 const wsUrl = `${wsProto}://${location.host}/api/clients/${encodeURIComponent(clientId)}/console/ws`;
+
+const term = new Terminal({
+  cursorBlink: true,
+  fontFamily: '"JetBrains Mono", ui-monospace, Menlo, Consolas, monospace',
+  fontSize: 13,
+  scrollback: 10000,
+  allowProposedApi: true,
+  theme: {
+    background: "#050913",
+    foreground: "#e8edf2",
+    cursor: "#6ee7b7",
+    cursorAccent: "#050913",
+    selectionBackground: "rgba(110, 231, 183, 0.25)",
+    black: "#1a1d29",
+    red: "#ef4444",
+    green: "#22c55e",
+    yellow: "#eab308",
+    blue: "#60a5fa",
+    magenta: "#c084fc",
+    cyan: "#22d3ee",
+    white: "#e8edf2",
+    brightBlack: "#475569",
+    brightRed: "#f87171",
+    brightGreen: "#4ade80",
+    brightYellow: "#facc15",
+    brightBlue: "#93c5fd",
+    brightMagenta: "#d8b4fe",
+    brightCyan: "#67e8f9",
+    brightWhite: "#f8fafc",
+  },
+});
+const fit = new FitAddon();
+term.loadAddon(fit);
+term.loadAddon(new WebLinksAddon());
+term.open(containerEl);
+
 let ws = null;
 let connected = false;
-let outputBuffer = "";
-let hasOutput = false;
+let sessionClosed = false;
+let offlineNotified = false;
+let lastSize = { cols: 0, rows: 0 };
+let resizeTimer = 0;
 
-const urlParams = new URLSearchParams(window.location.search);
-const prefilledCommand = urlParams.get("cmd");
-if (prefilledCommand && input) {
-  setTimeout(() => {
-    input.value = prefilledCommand;
-    input.focus();
-  }, 1000);
+function tryFit() {
+  try {
+    fit.fit();
+  } catch {
+    /* ignore: container not yet measured */
+  }
 }
 
 function setStatus(label, tone = "pill-offline") {
@@ -36,32 +75,46 @@ function setStatus(label, tone = "pill-offline") {
   statusPill.innerHTML = `<i class="fa-solid fa-circle"></i> ${label}`;
 }
 
-function appendSystem(text) {
-  outputBuffer += `\n[system] ${text}\n`;
-  renderOutput();
+function writeSystem(msg) {
+  term.writeln(`\x1b[2m[${msg}]\x1b[0m`);
 }
 
-function appendOutput(text) {
-  outputBuffer += text;
-  renderOutput();
+function sendResize() {
+  if (sessionClosed) return;
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  const cols = term.cols;
+  const rows = term.rows;
+  if (!cols || !rows) return;
+  if (cols === lastSize.cols && rows === lastSize.rows) return;
+  lastSize = { cols, rows };
+  ws.send(encodeMsgpack({ type: "resize", cols, rows }));
 }
 
-function renderOutput() {
-  if (!outputEl) return;
-  const normalized = outputBuffer.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-  outputEl.innerHTML = `<pre class="console-pre">${ansiToHtml(normalized)}</pre>`;
-  outputEl.scrollTop = outputEl.scrollHeight;
+function applyOutput(data) {
+  if (!data) return;
+  if (data instanceof Uint8Array) {
+    term.write(data);
+  } else if (typeof data === "string") {
+    term.write(data);
+  } else if (data?.buffer instanceof ArrayBuffer) {
+    term.write(new Uint8Array(data.buffer, data.byteOffset ?? 0, data.byteLength));
+  }
 }
 
 function connect() {
-  appendSystem("Connecting to console...");
-  setStatus("Connecting...", "pill-offline");
+  sessionClosed = false;
+  setStatus("Connecting...", "pill-ghost");
+  writeSystem("Connecting...");
+
   ws = new WebSocket(wsUrl);
   ws.binaryType = "arraybuffer";
 
   ws.addEventListener("open", () => {
     connected = true;
     setStatus("Connected", "pill-online");
+    term.options.disableStdin = false;
+    tryFit();
+    sendResize();
   });
 
   ws.addEventListener("message", (event) => {
@@ -74,32 +127,36 @@ function connect() {
         if (hostLabel) hostLabel.textContent = payload.host || "unknown";
         if (userLabel) userLabel.textContent = payload.user || "unknown";
         if (osLabel) osLabel.textContent = payload.os || "unknown";
-        setStatus("Connected", "pill-online");
+        setStatus("Live", "pill-online");
         break;
       case "status":
         if (payload.status === "offline") {
           setStatus("Offline", "pill-offline");
-          appendSystem(payload.reason || "Client offline");
-        } else if (payload.status === "connecting" && !hasOutput) {
-          setStatus("Connecting...", "pill-ghost");
+          if (!offlineNotified) {
+            offlineNotified = true;
+            writeSystem(payload.reason || "Client offline");
+          }
+          sessionClosed = true;
+          term.options.disableStdin = true;
         } else if (payload.status === "closed") {
           setStatus("Closed", "pill-offline");
-          appendSystem(payload.reason || "Console closed");
+          writeSystem(payload.reason || "Console closed");
+          sessionClosed = true;
+          term.options.disableStdin = true;
+        } else if (payload.status === "online") {
+          offlineNotified = false;
         }
         break;
-      case "output": {
-        if (payload.data) {
-          hasOutput = true;
-          setStatus("Live", "pill-online");
-          appendOutput(payload.data);
-        }
-        if (payload.error) appendSystem(payload.error);
+      case "output":
+        applyOutput(payload.data);
+        if (payload.error) writeSystem(payload.error);
         if (typeof payload.exitCode === "number") {
-          appendSystem(`Process exited (${payload.exitCode})`);
+          term.writeln(`\r\n\x1b[33m[Process exited (${payload.exitCode})]\x1b[0m`);
           setStatus("Closed", "pill-offline");
+          sessionClosed = true;
+          term.options.disableStdin = true;
         }
         break;
-      }
       default:
         break;
     }
@@ -109,7 +166,8 @@ function connect() {
     if (!connected) return;
     connected = false;
     setStatus("Disconnected", "pill-offline");
-    appendSystem("Connection closed");
+    if (!sessionClosed) writeSystem("Connection closed");
+    term.options.disableStdin = true;
   });
 
   ws.addEventListener("error", () => {
@@ -117,40 +175,41 @@ function connect() {
   });
 }
 
-function sendInput(value) {
-  if (!ws || ws.readyState !== WebSocket.OPEN) {
-    appendSystem("Socket not ready");
-    return;
-  }
-  ws.send(encodeMsgpack({ type: "input", data: value }));
-}
+term.onData((d) => {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  if (sessionClosed) return;
+  ws.send(encodeMsgpack({ type: "input", data: d }));
+});
 
-function wireInput() {
-  if (!form || !input) return;
+term.onResize(() => {
+  sendResize();
+});
 
-  form.addEventListener("submit", (e) => {
-    e.preventDefault();
-    const value = input.value;
-    if (!value.trim()) {
-      input.value = "";
-      return;
+window.addEventListener("resize", () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(tryFit, 120);
+});
+
+reconnectBtn?.addEventListener("click", () => {
+  try { ws?.close(); } catch { /* ignore */ }
+  term.reset();
+  connect();
+});
+
+clearBtn?.addEventListener("click", () => {
+  term.clear();
+});
+
+requestAnimationFrame(() => {
+  tryFit();
+  checkFeatureAccess("console", clientId).then((ok) => ok && connect());
+});
+
+const prefilledCommand = new URLSearchParams(window.location.search).get("cmd");
+if (prefilledCommand) {
+  setTimeout(() => {
+    if (ws?.readyState === WebSocket.OPEN && !sessionClosed) {
+      ws.send(encodeMsgpack({ type: "input", data: prefilledCommand + "\r" }));
     }
-    const text = value.endsWith("\n") ? value : `${value}\n`;
-    sendInput(text);
-    input.value = "";
-    input.focus();
-  });
-
-  input.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      form.dispatchEvent(new Event("submit"));
-    }
-  });
-
-  ctrlcBtn?.addEventListener("click", () => {
-    sendInput("\u0003");
-  });
+  }, 1200);
 }
-wireInput();
-checkFeatureAccess("console", clientId).then(ok => ok && connect());

