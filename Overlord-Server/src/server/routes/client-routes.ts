@@ -25,6 +25,7 @@ import {
   updateGroup,
   deleteGroup,
   setClientGroup,
+  deleteNotificationsForClient,
 } from "../../db";
 import { metrics } from "../../metrics";
 import { encodeMessage } from "../../protocol";
@@ -58,6 +59,7 @@ type ClientRouteDeps = {
   CORS_HEADERS: Record<string, string>;
   pendingScripts: Map<string, PendingScript>;
   pendingCommandReplies: Map<string, PendingCommandReply>;
+  broadcastNotificationsCleared: (clientId: string) => void;
 };
 
 export async function handleClientRoutes(
@@ -496,15 +498,18 @@ export async function handleClientRoutes(
     const muted = !!body?.muted;
 
     let updated = 0;
+    let cleared = 0;
     for (const cid of clientIds) {
       if (!canUserAccessClient(user.userId, user.role, cid)) continue;
       if (setClientNotificationsMuted(cid, muted)) updated++;
+      cleared += deleteNotificationsForClient(cid);
+      deps.broadcastNotificationsCleared(cid);
     }
 
     notifyDashboardViewers();
     const ip = server.requestIP(req)?.address || "unknown";
-    logAudit({ timestamp: Date.now(), username: user.username, ip, action: AuditAction.COMMAND, details: `bulk_set_notifications_muted:${muted}:${updated}/${clientIds.length}`, success: true });
-    return Response.json({ ok: true, updated, total: clientIds.length, muted }, { headers: deps.CORS_HEADERS });
+    logAudit({ timestamp: Date.now(), username: user.username, ip, action: AuditAction.COMMAND, details: `bulk_set_notifications_muted:${muted}:${updated}/${clientIds.length} (cleared ${cleared})`, success: true });
+    return Response.json({ ok: true, updated, total: clientIds.length, muted, cleared }, { headers: deps.CORS_HEADERS });
   }
 
   const muteMatch = url.pathname.match(/^\/api\/clients\/([^/]+)\/notifications-muted$/);
@@ -534,6 +539,8 @@ export async function handleClientRoutes(
     if (!updated) {
       return Response.json({ error: "Client not found" }, { status: 404 });
     }
+    const cleared = deleteNotificationsForClient(targetId);
+    deps.broadcastNotificationsCleared(targetId);
     notifyDashboardViewers();
 
     const ip = server.requestIP(req)?.address || "unknown";
@@ -543,11 +550,11 @@ export async function handleClientRoutes(
       ip,
       action: AuditAction.COMMAND,
       targetClientId: targetId,
-      details: muted ? "mute_notifications" : "unmute_notifications",
+      details: `${muted ? "mute_notifications" : "unmute_notifications"} (cleared ${cleared})`,
       success: true,
     });
 
-    return Response.json({ ok: true, muted }, { headers: deps.CORS_HEADERS });
+    return Response.json({ ok: true, muted, cleared }, { headers: deps.CORS_HEADERS });
   }
 
   const bookmarkMatch = url.pathname.match(/^\/api\/clients\/([^/]+)\/bookmark$/);

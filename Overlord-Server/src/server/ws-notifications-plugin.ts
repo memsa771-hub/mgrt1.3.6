@@ -362,6 +362,25 @@ export function createNotificationPluginHandlers(deps: CreateDeps) {
       }
     },
 
+    broadcastNotificationsCleared(clientId: string) {
+      for (const key of Array.from(deps.notificationRate.keys())) {
+        if (key === clientId || key.startsWith(`${clientId}:`)) {
+          deps.notificationRate.delete(key);
+        }
+      }
+      const item = { type: "notifications_cleared", clientId, ts: Date.now() };
+      for (const session of sessionManager.getAllNotificationSessions().values()) {
+        const sRole = session.userRole ?? session.viewer.data.userRole ?? "";
+        const sUserId = session.userId ?? session.viewer.data.userId;
+        if (sRole !== "admin") {
+          if (sUserId === undefined || !deps.canUserAccessClient(sUserId, sRole, clientId)) {
+            continue;
+          }
+        }
+        safeSendViewer(session.viewer, item);
+      }
+    },
+
     broadcastClientLifecycleEvent(
       event: "client_online" | "client_offline" | "client_purgatory",
       info: { id: string; host?: string; user?: string; os?: string; ip?: string; country?: string },

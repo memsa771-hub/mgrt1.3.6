@@ -512,6 +512,7 @@ async function startServer() {
       CORS_HEADERS,
       pendingScripts,
       pendingCommandReplies,
+      broadcastNotificationsCleared: notificationPluginHandlers.broadcastNotificationsCleared,
     },
     wsUpgrade: {
       isAuthorizedAgentRequest: isAuthorizedAgent,

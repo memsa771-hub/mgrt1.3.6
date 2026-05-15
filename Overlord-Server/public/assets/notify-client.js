@@ -34,6 +34,7 @@ let notificationHandlers = new Set();
 let statusHandlers = new Set();
 let unreadHandlers = new Set();
 let clientEventHandlers = new Set();
+let notificationsClearedHandlers = new Set();
 let lastHistory = [];
 
 function emitStatus(status) {
@@ -65,6 +66,17 @@ function emitClientEvent(item) {
   for (const handler of clientEventHandlers) {
     try {
       handler(item);
+    } catch {}
+  }
+}
+
+function emitNotificationsCleared(clientId) {
+  if (Array.isArray(lastHistory) && lastHistory.length) {
+    lastHistory = lastHistory.filter((item) => item.clientId !== clientId);
+  }
+  for (const handler of notificationsClearedHandlers) {
+    try {
+      handler(clientId);
     } catch {}
   }
 }
@@ -319,6 +331,10 @@ function handleMessage(payload) {
     emitClientEvent(payload);
     showClientEventDesktopNotification(payload);
   }
+  if (payload.type === "notifications_cleared" && payload.clientId) {
+    console.log("[notifications] cleared for", payload.clientId);
+    emitNotificationsCleared(payload.clientId);
+  }
 }
 
 let msgpackLoadPromise = null;
@@ -437,6 +453,11 @@ export function subscribeNotifications(handler) {
 export function subscribeClientEvents(handler) {
   clientEventHandlers.add(handler);
   return () => clientEventHandlers.delete(handler);
+}
+
+export function subscribeNotificationsCleared(handler) {
+  notificationsClearedHandlers.add(handler);
+  return () => notificationsClearedHandlers.delete(handler);
 }
 
 export function subscribeUnread(handler) {

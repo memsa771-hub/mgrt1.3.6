@@ -2,6 +2,7 @@ import {
   startNotificationClient,
   subscribeNotifications,
   subscribeClientEvents,
+  subscribeNotificationsCleared,
   subscribeReady,
   subscribeStatus,
   markAllNotificationsRead,
@@ -336,6 +337,18 @@ function addClientEvent(item) {
 function clearTable() {
   tableState.entries.clear();
   applyTableView();
+}
+
+function removeEntriesForClient(clientId) {
+  if (!clientId) return;
+  let removed = false;
+  for (const [uid, entry] of tableState.entries) {
+    if (entry.item?.clientId === clientId) {
+      tableState.entries.delete(uid);
+      removed = true;
+    }
+  }
+  if (removed) applyTableView();
 }
 
 // ── Client ID cell (collapsed by default, click to expand) ──────────────────
@@ -718,6 +731,7 @@ function connect() {
 
   subscribeNotifications((item) => addNotification(item, true));
   subscribeClientEvents((item) => addClientEvent(item));
+  subscribeNotificationsCleared((clientId) => removeEntriesForClient(clientId));
 }
 
 const CLIENT_EVENT_BADGE = {

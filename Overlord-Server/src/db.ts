@@ -1945,6 +1945,12 @@ export function clearNotifications() {
   console.log("[db] cleared all notifications and screenshots");
 }
 
+export function deleteNotificationsForClient(clientId: string): number {
+  db.run(`DELETE FROM notification_screenshots WHERE client_id = ?`, clientId);
+  const result = db.run(`DELETE FROM notifications WHERE client_id = ?`, clientId);
+  return (result as any)?.changes || 0;
+}
+
 export function getClientEnrollmentStatus(id: string): string | null {
   const row = db
     .query<{ enrollment_status: string }>(
