@@ -131,11 +131,24 @@ func CaptureAndSend(ctx context.Context, env *rt.Env) error {
 	consecutiveCaptureFails.Store(0)
 	captureDur := time.Since(t0)
 
+	willSendViaWebRTC := blockCodec() == "h264" && webrtcpub.IsActive(webrtcpub.KindDesktop)
+	var slotAcquired bool
+	if !willSendViaWebRTC {
+		if !AcquireFrameSlot() {
+			PutRGBA(img)
+			return nil
+		}
+		slotAcquired = true
+	}
+
 	quality := jpegQuality()
 	frame, encodeDur, err := buildFrame(img, display, quality)
 	PutRGBA(img)
 	img = nil
 	if err != nil {
+		if slotAcquired {
+			ReleaseFrameSlot()
+		}
 		return err
 	}
 	now := time.Now()
@@ -145,6 +158,9 @@ func CaptureAndSend(ctx context.Context, env *rt.Env) error {
 	}
 	frame.Header.FPS = fps
 	if ctx.Err() != nil {
+		if slotAcquired {
+			ReleaseFrameSlot()
+		}
 		return nil
 	}
 	if frame.Header.Format == "h264" && webrtcpub.IsActive(webrtcpub.KindDesktop) {
@@ -155,6 +171,9 @@ func CaptureAndSend(ctx context.Context, env *rt.Env) error {
 		if werr := webrtcpub.WriteH264(webrtcpub.KindDesktop, frame.Data, dur); werr != nil {
 			log.Printf("webrtc: write h264 failed: %v", werr)
 		}
+		if slotAcquired {
+			ReleaseFrameSlot()
+		}
 		statFrames.Add(1)
 		statCapNs.Add(captureDur.Nanoseconds())
 		statEncNs.Add(encodeDur.Nanoseconds())
@@ -162,8 +181,10 @@ func CaptureAndSend(ctx context.Context, env *rt.Env) error {
 		statBytes.Add(int64(len(frame.Data)))
 		return nil
 	}
-	if !AcquireFrameSlot() {
-		return nil // backpressure: server hasn't acked previous frames
+	if !slotAcquired {
+		if !AcquireFrameSlot() {
+			return nil
+		}
 	}
 	sendStart := time.Now()
 	err = wire.WriteMsg(ctx, env.Conn, frame)
