@@ -14,5 +14,11 @@ func platformMachineID() string {
 		log.Printf("[identity] WARNING: failed to read /etc/machine-id: %v", err)
 		return ""
 	}
-	return strings.TrimSpace(string(data))
+	machineID := strings.TrimSpace(string(data))
+
+	seed := getOrCreateInstanceSeed()
+	if seed != "" {
+		return machineID + "|" + seed
+	}
+	return machineID
 }
