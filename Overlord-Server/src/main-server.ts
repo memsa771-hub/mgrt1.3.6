@@ -13,7 +13,7 @@ import { v4 as uuidv4 } from "uuid";
 import { authenticateRequest } from "./auth";
 import { loadConfig, getConfig } from "./config";
 import { flushAuditLogsSync } from "./auditLog";
-import { getUserById, getUsersForNotificationDelivery, getUsersForNotificationDeliveryByClient, canUserAccessClient, setUserClientAccessRule, setUserClientAccessScope, getUserClientAccessScope, hasPermission } from "./users";
+import { getUserById, getUsersForNotificationDelivery, getUsersForNotificationDeliveryByClient, getUsersForNotificationDeliveryByClientOwnership, isClientOwnedByUser, canUserAccessClient, setUserClientAccessRule, setUserClientAccessScope, getUserClientAccessScope, hasPermission } from "./users";
 import { requireAuth, requirePermission } from "./rbac";
 import { metrics } from "./metrics";
 import { ensureDataDir } from "./paths";
@@ -326,7 +326,7 @@ const toDeliveryTarget = (u: any): UserDeliveryTarget => ({
 
 const deliverNotificationWithScreenshotForRecord = (record: NotificationRecord) => {
   const getUserDeliveryTargets = (clientId: string): UserDeliveryTarget[] =>
-    getUsersForNotificationDeliveryByClient(clientId).map(toDeliveryTarget);
+    getUsersForNotificationDeliveryByClientOwnership(clientId).map(toDeliveryTarget);
   return deliverNotificationWithScreenshot(record, getUserDeliveryTargets);
 };
 
@@ -346,12 +346,7 @@ const notificationPluginHandlers = createNotificationPluginHandlers({
   forwardPluginEventToRuntime: (clientId, pluginId, event, payload) =>
     pluginRuntime.dispatchClientEvent(clientId, pluginId, event, payload),
   getDeliveryTargetsForClientEvent: (event: string, clientId: string): UserDeliveryTarget[] => {
-    if (event === "client_purgatory") {
-      return getUsersForNotificationDelivery()
-        .filter((u) => u.role === "admin" || u.role === "operator")
-        .map(toDeliveryTarget);
-    }
-    return getUsersForNotificationDeliveryByClient(clientId).map(toDeliveryTarget);
+    return getUsersForNotificationDeliveryByClientOwnership(clientId).map(toDeliveryTarget);
   },
   savePluginState,
 });

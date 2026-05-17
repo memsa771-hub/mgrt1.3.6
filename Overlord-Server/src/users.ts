@@ -1228,6 +1228,35 @@ export function getUsersForNotificationDeliveryByClient(clientId: string): UserD
   );
 }
 
+function getClientOwnerUserId(clientId: string): number | null {
+  if (!clientId) return null;
+  try {
+    const row = db
+      .prepare("SELECT built_by_user_id FROM clients WHERE id = ?")
+      .get(clientId) as { built_by_user_id: number | null } | undefined;
+    if (!row || row.built_by_user_id == null) return null;
+    return typeof row.built_by_user_id === "number" ? row.built_by_user_id : null;
+  } catch {
+    return null;
+  }
+}
+
+export function getUsersForNotificationDeliveryByClientOwnership(
+  clientId: string,
+): UserDeliveryRow[] {
+  const ownerId = getClientOwnerUserId(clientId);
+  const all = getUsersForNotificationDelivery();
+  if (ownerId != null) {
+    return all.filter((user) => user.id === ownerId);
+  }
+  return all.filter((user) => user.role === "admin");
+}
+
+export function isClientOwnedByUser(userId: number, clientId: string): boolean {
+  const ownerId = getClientOwnerUserId(clientId);
+  return ownerId != null && ownerId === userId;
+}
+
 
 export interface RegistrationKey {
   id: number;

