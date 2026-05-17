@@ -153,6 +153,7 @@ type ProcessInfo struct {
 	Memory   uint64  `msgpack:"memory"`
 	Username string  `msgpack:"username,omitempty"`
 	Type     string  `msgpack:"type,omitempty"`
+	Self     bool    `msgpack:"self,omitempty"`
 }
 
 type ProcessListResult struct {

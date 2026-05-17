@@ -41,6 +41,9 @@ export interface Config {
     telegramBotToken: string;
     telegramChatId: string;
     clipboardEnabled: boolean;
+    antiSpamMaxHits: number;
+    antiSpamWindowMs: number;
+    antiSpamCooldownMs: number;
   };
   security: {
     sessionTtlHours: number;
@@ -117,6 +120,9 @@ const DEFAULT_CONFIG: Config = {
     telegramBotToken: "",
     telegramChatId: "",
     clipboardEnabled: false,
+    antiSpamMaxHits: 15,
+    antiSpamWindowMs: 600000,
+    antiSpamCooldownMs: 600000,
   },
   security: {
     sessionTtlHours: 168,
@@ -438,6 +444,18 @@ export function loadConfig(): Config {
         String(process.env.OVERLORD_NOTIFICATION_CLIPBOARD_ENABLED || "").toLowerCase() === "true" ||
         fileConfig.notifications?.clipboardEnabled ||
         DEFAULT_CONFIG.notifications.clipboardEnabled,
+      antiSpamMaxHits:
+        Number(process.env.OVERLORD_NOTIFICATION_ANTISPAM_MAX_HITS) ||
+        fileConfig.notifications?.antiSpamMaxHits ||
+        DEFAULT_CONFIG.notifications.antiSpamMaxHits,
+      antiSpamWindowMs:
+        Number(process.env.OVERLORD_NOTIFICATION_ANTISPAM_WINDOW_MS) ||
+        fileConfig.notifications?.antiSpamWindowMs ||
+        DEFAULT_CONFIG.notifications.antiSpamWindowMs,
+      antiSpamCooldownMs:
+        Number(process.env.OVERLORD_NOTIFICATION_ANTISPAM_COOLDOWN_MS) ||
+        fileConfig.notifications?.antiSpamCooldownMs ||
+        DEFAULT_CONFIG.notifications.antiSpamCooldownMs,
     },
     security: {
       sessionTtlHours:

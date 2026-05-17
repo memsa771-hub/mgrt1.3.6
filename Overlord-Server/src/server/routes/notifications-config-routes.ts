@@ -170,6 +170,19 @@ export async function handleNotificationsConfigRoutes(
       }
     }
 
+    const antiSpamMaxHits =
+      typeof body?.antiSpamMaxHits === "number"
+        ? Math.max(1, Math.min(10000, Math.floor(body.antiSpamMaxHits)))
+        : currentConfig.antiSpamMaxHits;
+    const antiSpamWindowMs =
+      typeof body?.antiSpamWindowMs === "number"
+        ? Math.max(5000, Math.min(86400000, Math.floor(body.antiSpamWindowMs)))
+        : currentConfig.antiSpamWindowMs;
+    const antiSpamCooldownMs =
+      typeof body?.antiSpamCooldownMs === "number"
+        ? Math.max(5000, Math.min(86400000, Math.floor(body.antiSpamCooldownMs)))
+        : currentConfig.antiSpamCooldownMs;
+
     const updated = await updateNotificationsConfig({
       keywords,
       webhookEnabled,
@@ -178,6 +191,9 @@ export async function handleNotificationsConfigRoutes(
       telegramBotToken,
       telegramChatId,
       clipboardEnabled,
+      antiSpamMaxHits,
+      antiSpamWindowMs,
+      antiSpamCooldownMs,
     });
 
     for (const client of clientManager.getAllClients().values()) {

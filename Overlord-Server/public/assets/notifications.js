@@ -27,6 +27,9 @@ const keywordInput = document.getElementById("keyword-input");
 const clipboardEnabledInput = document.getElementById("clipboard-enabled");
 const saveKeywordsBtn = document.getElementById("save-keywords");
 const keywordHint = document.getElementById("keyword-hint");
+const antiSpamMaxHitsInput = document.getElementById("antispam-max-hits");
+const antiSpamWindowInput = document.getElementById("antispam-window");
+const antiSpamCooldownInput = document.getElementById("antispam-cooldown");
 
 // Webhook section
 const webhookEnabledInput = document.getElementById("webhook-enabled");
@@ -476,6 +479,15 @@ async function loadKeywords() {
     if (clipboardEnabledInput) {
       clipboardEnabledInput.checked = data?.notifications?.clipboardEnabled === true;
     }
+    if (antiSpamMaxHitsInput) {
+      antiSpamMaxHitsInput.value = data?.notifications?.antiSpamMaxHits ?? 15;
+    }
+    if (antiSpamWindowInput) {
+      antiSpamWindowInput.value = Math.round((data?.notifications?.antiSpamWindowMs ?? 600000) / 60000);
+    }
+    if (antiSpamCooldownInput) {
+      antiSpamCooldownInput.value = Math.round((data?.notifications?.antiSpamCooldownMs ?? 600000) / 60000);
+    }
   } catch {}
 }
 
@@ -484,11 +496,21 @@ function wireKeywordSave() {
   saveKeywordsBtn.addEventListener("click", async () => {
     const keywords = parseKeywords(keywordInput.value);
     const clipboardEnabled = clipboardEnabledInput ? clipboardEnabledInput.checked : false;
+    const payload = { keywords, clipboardEnabled };
+    if (antiSpamMaxHitsInput) {
+      payload.antiSpamMaxHits = Math.max(1, parseInt(antiSpamMaxHitsInput.value, 10) || 15);
+    }
+    if (antiSpamWindowInput) {
+      payload.antiSpamWindowMs = Math.max(1, parseInt(antiSpamWindowInput.value, 10) || 10) * 60000;
+    }
+    if (antiSpamCooldownInput) {
+      payload.antiSpamCooldownMs = Math.max(1, parseInt(antiSpamCooldownInput.value, 10) || 10) * 60000;
+    }
     try {
       const res = await fetch("/api/notifications/config", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ keywords, clipboardEnabled }),
+        body: JSON.stringify(payload),
       });
       if (!res.ok) {
         window.showToast?.("Failed to save keywords", "error", 4000);
@@ -500,6 +522,15 @@ function wireKeywordSave() {
       renderKeywordHint(updated.length);
       if (clipboardEnabledInput && typeof data?.notifications?.clipboardEnabled === "boolean") {
         clipboardEnabledInput.checked = data.notifications.clipboardEnabled;
+      }
+      if (antiSpamMaxHitsInput && data?.notifications?.antiSpamMaxHits) {
+        antiSpamMaxHitsInput.value = data.notifications.antiSpamMaxHits;
+      }
+      if (antiSpamWindowInput && data?.notifications?.antiSpamWindowMs) {
+        antiSpamWindowInput.value = Math.round(data.notifications.antiSpamWindowMs / 60000);
+      }
+      if (antiSpamCooldownInput && data?.notifications?.antiSpamCooldownMs) {
+        antiSpamCooldownInput.value = Math.round(data.notifications.antiSpamCooldownMs / 60000);
       }
       window.showToast?.("Keywords updated", "success", 3000);
     } catch {

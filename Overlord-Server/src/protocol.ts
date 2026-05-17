@@ -232,6 +232,7 @@ export type ProcessInfo = {
   memory: number;
   username?: string;
   type?: string;
+  self?: boolean;
 };
 
 export type ProcessListResult = {

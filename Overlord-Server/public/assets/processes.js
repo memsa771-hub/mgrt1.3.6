@@ -255,6 +255,9 @@ function createProcessRow(proc, depth = 0) {
   if (selectedPid === proc.pid) {
     row.classList.add("selected");
   }
+  if (proc.self) {
+    row.classList.add("self-process");
+  }
 
   const cpuColor =
     proc.cpu > 50
@@ -276,6 +279,7 @@ function createProcessRow(proc, depth = 0) {
   }
 
   let nameColor = "text-slate-200";
+  let iconClass = "fa-microchip";
   let iconColor = "text-blue-400";
   if (proc.type === "system") {
     nameColor = "text-purple-400";
@@ -287,12 +291,21 @@ function createProcessRow(proc, depth = 0) {
     nameColor = "text-green-300";
     iconColor = "text-green-400";
   }
+  if (proc.self) {
+    nameColor = "text-yellow-300 font-semibold";
+    iconClass = "fa-crosshairs";
+    iconColor = "text-yellow-400";
+  }
+
+  const selfBadge = proc.self
+    ? ' <span class="ml-1 text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-yellow-500/20 text-yellow-300 border border-yellow-500/40">agent</span>'
+    : "";
 
   row.innerHTML = `
     <div class="col-span-1 text-sm font-mono text-slate-400">${proc.pid}</div>
     <div class="col-span-4 flex items-center gap-1 truncate">
-      ${indent}${treeIcon}<i class="fa-solid fa-microchip ${iconColor}"></i>
-      <span class="truncate ${nameColor}">${escapeHtml(proc.name)}</span>
+      ${indent}${treeIcon}<i class="fa-solid ${iconClass} ${iconColor}"></i>
+      <span class="truncate ${nameColor}">${escapeHtml(proc.name)}</span>${selfBadge}
     </div>
     <div class="col-span-2 text-sm ${cpuColor} font-semibold">${proc.cpu.toFixed(1)}%</div>
     <div class="col-span-2 text-sm text-slate-400">${memoryStr}</div>

@@ -6,6 +6,7 @@ package handlers
 import (
 	"bufio"
 	"bytes"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -15,6 +16,7 @@ import (
 )
 
 func listProcesses() ([]wire.ProcessInfo, error) {
+	selfPID := int32(os.Getpid())
 
 	cmd := exec.Command("ps", "aux")
 	output, err := cmd.Output()
@@ -78,6 +80,7 @@ func listProcesses() ([]wire.ProcessInfo, error) {
 			Memory:   memBytes,
 			Username: username,
 			Type:     procType,
+			Self:     int32(pid) == selfPID,
 		})
 	}
 

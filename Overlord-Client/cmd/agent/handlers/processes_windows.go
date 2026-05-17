@@ -5,6 +5,7 @@ package handlers
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"syscall"
 	"unsafe"
@@ -37,6 +38,7 @@ type PROCESS_MEMORY_COUNTERS struct {
 }
 
 func listProcesses() ([]wire.ProcessInfo, error) {
+	selfPID := int32(os.Getpid())
 	var pids [4096]uint32
 	var bytesReturned uint32
 
@@ -157,6 +159,7 @@ func listProcesses() ([]wire.ProcessInfo, error) {
 			Memory:   memory,
 			Username: username,
 			Type:     procType,
+			Self:     pid == selfPID,
 		})
 	}
 

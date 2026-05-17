@@ -33,6 +33,12 @@ type NotificationRateState = {
   lastWarned: number;
 };
 
+type AntiSpamState = {
+  hits: number;
+  windowStart: number;
+  blockedUntil: number;
+};
+
 type PendingNotificationScreenshot = {
   notificationId: string;
   clientId: string;
@@ -45,6 +51,9 @@ type NotificationConfigShape = {
   spamWindowMs?: number;
   spamWarnThreshold?: number;
   historyLimit?: number;
+  antiSpamMaxHits?: number;
+  antiSpamWindowMs?: number;
+  antiSpamCooldownMs?: number;
 };
 
 type CreateDeps = {
@@ -88,6 +97,8 @@ function safeSendViewer(ws: ServerWebSocket<SocketData>, payload: unknown) {
 }
 
 export function createNotificationPluginHandlers(deps: CreateDeps) {
+  const antiSpamState = new Map<string, AntiSpamState>();
+
   const pluginUIEventBuffer = new Map<string, Array<{ event: string; payload: any; ts: number }>>();
   const PLUGIN_UI_EVENT_BUFFER_MAX = 200;
   const PLUGIN_UI_EVENT_TTL_MS = 60_000;
@@ -183,6 +194,43 @@ export function createNotificationPluginHandlers(deps: CreateDeps) {
     return true;
   }
 
+  function checkAntiSpam(key: string, ts: number): boolean {
+    const notificationConfig = deps.getNotificationConfig();
+    const maxHits = Math.max(1, notificationConfig.antiSpamMaxHits || 15);
+    const windowMs = Math.max(5000, notificationConfig.antiSpamWindowMs || 600000);
+    const cooldownMs = Math.max(5000, notificationConfig.antiSpamCooldownMs || 600000);
+
+    const state = antiSpamState.get(key);
+
+    if (state) {
+      if (ts < state.blockedUntil) {
+        return false;
+      }
+
+      if (ts - state.windowStart > windowMs) {
+        state.windowStart = ts;
+        state.hits = 1;
+        state.blockedUntil = 0;
+        antiSpamState.set(key, state);
+        return true;
+      }
+
+      state.hits += 1;
+      if (state.hits > maxHits) {
+        state.blockedUntil = ts + cooldownMs;
+        logger.warn(`[notify] anti-spam: blocked keyword for ${key} until ${new Date(state.blockedUntil).toISOString()} (${state.hits} hits in ${windowMs}ms)`);
+        antiSpamState.set(key, state);
+        return false;
+      }
+
+      antiSpamState.set(key, state);
+      return true;
+    }
+
+    antiSpamState.set(key, { hits: 1, windowStart: ts, blockedUntil: 0 });
+    return true;
+  }
+
   function pruneNotificationRate() {
     const notificationConfig = deps.getNotificationConfig();
     const spamWindow = Math.max(5000, notificationConfig.spamWindowMs || 60000);
@@ -191,6 +239,15 @@ export function createNotificationPluginHandlers(deps: CreateDeps) {
     for (const [key, state] of deps.notificationRate) {
       if (now - state.lastSent > maxAge && now - state.windowStart > maxAge) {
         deps.notificationRate.delete(key);
+      }
+    }
+
+    const antiSpamWindowMs = Math.max(5000, notificationConfig.antiSpamWindowMs || 600000);
+    const antiSpamCooldownMs = Math.max(5000, notificationConfig.antiSpamCooldownMs || 600000);
+    const antiSpamMaxAge = Math.max(antiSpamWindowMs, antiSpamCooldownMs) * 2;
+    for (const [key, state] of antiSpamState) {
+      if (now - state.windowStart > antiSpamMaxAge && now > state.blockedUntil) {
+        antiSpamState.delete(key);
       }
     }
   }
@@ -262,6 +319,10 @@ export function createNotificationPluginHandlers(deps: CreateDeps) {
       const keyword = typeof payload.keyword === "string" ? payload.keyword : "";
       const rateKey = `${clientId}:${keyword || title}`;
       if (!shouldAcceptNotification(rateKey, ts)) {
+        return;
+      }
+      const antiSpamKey = `${clientId}:${keyword || title}`;
+      if (!checkAntiSpam(antiSpamKey, ts)) {
         return;
       }
       const info = clientManager.getClient(clientId);
@@ -366,6 +427,11 @@ export function createNotificationPluginHandlers(deps: CreateDeps) {
       for (const key of Array.from(deps.notificationRate.keys())) {
         if (key === clientId || key.startsWith(`${clientId}:`)) {
           deps.notificationRate.delete(key);
+        }
+      }
+      for (const key of Array.from(antiSpamState.keys())) {
+        if (key === clientId || key.startsWith(`${clientId}:`)) {
+          antiSpamState.delete(key);
         }
       }
       const item = { type: "notifications_cleared", clientId, ts: Date.now() };
