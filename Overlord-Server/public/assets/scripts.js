@@ -794,7 +794,7 @@ if (window.CodeMirror && scriptEditor) {
     tabSize: 2,
     lineWrapping: true,
   });
-  editorInstance.setSize(null, "100%");
+  editorInstance.setSize(null, "24rem");
   window._vbCodeMirror = editorInstance;
 }
 
@@ -803,6 +803,36 @@ const modeToggleVisual = document.getElementById("mode-toggle-visual");
 const codeEditorSection = document.getElementById("code-editor-section");
 const visualBuilderSection = document.getElementById("visual-builder-section");
 const rightColumn = codeEditorSection?.parentElement?.querySelector(".lg\\:col-span-1");
+
+const lgMediaQuery = window.matchMedia("(min-width: 1024px)");
+function syncEditorHeight() {
+  if (!editorInstance || !codeEditorSection || !rightColumn) return;
+  if (codeEditorSection.classList.contains("hidden")) return;
+  if (!lgMediaQuery.matches) {
+    editorInstance.setSize(null, "24rem");
+    return;
+  }
+  const rightHeight = rightColumn.getBoundingClientRect().height;
+  const card = codeEditorSection.querySelector(":scope > div");
+  if (!card) return;
+  const cs = getComputedStyle(card);
+  const padY = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+  const header = card.querySelector(":scope > .flex.items-center.justify-between");
+  const headerH = header ? header.getBoundingClientRect().height : 0;
+  const headerStyle = header ? getComputedStyle(header) : null;
+  const headerMb = headerStyle ? parseFloat(headerStyle.marginBottom) || 0 : 0;
+  const target = Math.max(384, rightHeight - padY - headerH - headerMb);
+  editorInstance.setSize(null, `${target}px`);
+}
+if (editorInstance && rightColumn) {
+  syncEditorHeight();
+  if (typeof ResizeObserver === "function") {
+    const ro = new ResizeObserver(() => syncEditorHeight());
+    ro.observe(rightColumn);
+  }
+  window.addEventListener("resize", syncEditorHeight);
+  lgMediaQuery.addEventListener?.("change", syncEditorHeight);
+}
 let visualBuilderInited = false;
 
 function setMode(mode) {
@@ -825,7 +855,10 @@ function setMode(mode) {
     visualBuilderSection?.classList.add("hidden");
     modeToggleCode.className = "flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-semibold text-sm transition-colors bg-emerald-600 text-white";
     modeToggleVisual.className = "flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-semibold text-sm transition-colors bg-slate-800 text-slate-300 hover:bg-slate-700";
-    if (editorInstance) editorInstance.refresh();
+    if (editorInstance) {
+      editorInstance.refresh();
+      syncEditorHeight();
+    }
   }
 }
 

@@ -94,8 +94,8 @@
         </div>
 
         <!-- Script Editor -->
-        <div id="code-editor-section" class="lg:col-span-2">
-          <div class="bg-slate-900/70 rounded-xl border border-slate-800 p-6 h-full flex flex-col">
+        <div id="code-editor-section" class="lg:col-span-2 min-h-0">
+          <div class="bg-slate-900/70 rounded-xl border border-slate-800 p-6 h-full flex flex-col overflow-hidden">
             <div class="flex items-center justify-between mb-4">
               <h2 class="text-xl font-semibold">Script Editor</h2>
               <div class="flex items-center gap-2">
@@ -119,14 +119,14 @@
             </div>
             <textarea
               id="script-editor"
-              class="w-full flex-1 min-h-[24rem] px-4 py-3 rounded-lg border border-slate-700 bg-slate-950 text-slate-100 font-mono text-sm resize-none focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              class="w-full flex-1 min-h-[24rem] px-4 py-3 rounded-lg border border-slate-700 bg-slate-950 text-slate-100 font-mono text-sm resize-none overflow-auto focus:outline-none focus:ring-2 focus:ring-emerald-500"
               placeholder="Enter your script here..."
             ></textarea>
           </div>
         </div>
 
         <!-- Saved Scripts + Templates (right column) -->
-        <div class="lg:col-span-1">
+        <div class="lg:col-span-1 self-start">
           <div class="bg-slate-900/70 rounded-xl border border-slate-800 p-6 mb-6">
             <h2 class="text-xl font-semibold mb-4">Saved Scripts</h2>
             <div class="flex gap-2 mb-3">

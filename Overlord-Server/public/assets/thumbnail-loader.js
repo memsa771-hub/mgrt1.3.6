@@ -49,6 +49,24 @@ function buildThumbnailUrl(clientId, version) {
   return version > 0 ? `${base}?v=${version}` : base;
 }
 
+export function applyImageSrcSmooth(img, url) {
+  if (!img || !url) return;
+  if (img.dataset.thumbUrl === url) return;
+  const newImg = img.cloneNode(false);
+  newImg.dataset.thumbUrl = url;
+  newImg.style.display = "block";
+  const swap = () => {
+    if (img.parentNode && img.dataset.thumbUrl !== url) img.replaceWith(newImg);
+  };
+  newImg.addEventListener("error", () => {}, { once: true });
+  newImg.src = url;
+  if (typeof newImg.decode === "function") {
+    newImg.decode().then(swap).catch(() => {});
+  } else {
+    newImg.addEventListener("load", swap, { once: true });
+  }
+}
+
 export class ThumbnailLoader {
   constructor(options = {}) {
     this.refreshIntervalMs = Math.max(500, Number(options.refreshIntervalMs) || DEFAULT_REFRESH_MS);
@@ -147,10 +165,7 @@ export class ThumbnailLoader {
     const img = element.querySelector("img[data-thumb-img]");
     if (!img) return;
     const url = buildThumbnailUrl(rec.clientId, rec.version);
-    if (img.dataset.thumbUrl !== url) {
-      img.dataset.thumbUrl = url;
-      img.src = url;
-    }
+    applyImageSrcSmooth(img, url);
   }
 
   handleIntersection(entries) {

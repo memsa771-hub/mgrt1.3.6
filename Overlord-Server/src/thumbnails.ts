@@ -128,7 +128,9 @@ export async function generateThumbnail(id: string): Promise<boolean> {
       updatedAt: now,
     });
     evictThumbnailsIfFull();
-    latestFrames.delete(id);
+    if (latestFrames.get(id) === frameData) {
+      latestFrames.delete(id);
+    }
     return true;
   } catch (err) {
     console.error(`[thumbnails] Failed to generate thumbnail for client ${id}:`, err);
@@ -136,8 +138,52 @@ export async function generateThumbnail(id: string): Promise<boolean> {
   }
 }
 
+const thumbnailGenState = new Map<string, { inFlight: boolean; pending: boolean }>();
+
+export async function requestThumbnailRegen(id: string): Promise<boolean> {
+  let state = thumbnailGenState.get(id);
+  if (!state) {
+    state = { inFlight: false, pending: false };
+    thumbnailGenState.set(id, state);
+  }
+  if (state.inFlight) {
+    state.pending = true;
+    return false;
+  }
+  state.inFlight = true;
+  let didGenerate = false;
+  try {
+    while (true) {
+      state.pending = false;
+      const ok = await generateThumbnail(id);
+      if (ok) didGenerate = true;
+      if (!state.pending) break;
+    }
+  } finally {
+    state.inFlight = false;
+    if (thumbnailGenState.get(id) === state && !state.pending) {
+      thumbnailGenState.delete(id);
+    }
+  }
+  return didGenerate;
+}
+
 export function markThumbnailRequested(id: string) {
   thumbnailRequests.set(id, Date.now());
+}
+
+export function isThumbnailRequested(id: string, windowMs = 5000): boolean {
+  const ts = thumbnailRequests.get(id);
+  if (!ts) return false;
+  if (Date.now() - ts > windowMs) {
+    thumbnailRequests.delete(id);
+    return false;
+  }
+  return true;
+}
+
+export function clearThumbnailRequest(id: string) {
+  thumbnailRequests.delete(id);
 }
 
 export function consumeThumbnailRequest(id: string, windowMs = 5000): boolean {
@@ -149,4 +195,41 @@ export function consumeThumbnailRequest(id: string, windowMs = 5000): boolean {
   }
   thumbnailRequests.delete(id);
   return true;
+}
+
+const thumbnailWaiters = new Map<string, Set<() => void>>();
+
+export function notifyThumbnailGenerated(id: string) {
+  const waiters = thumbnailWaiters.get(id);
+  if (!waiters) return;
+  thumbnailWaiters.delete(id);
+  for (const cb of waiters) {
+    try { cb(); } catch {}
+  }
+}
+
+export function waitForThumbnail(id: string, timeoutMs = 2500): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settled = false;
+    let callback: () => void;
+    const finish = (fresh: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      const set = thumbnailWaiters.get(id);
+      if (set) {
+        set.delete(callback);
+        if (set.size === 0) thumbnailWaiters.delete(id);
+      }
+      resolve(fresh);
+    };
+    callback = () => finish(true);
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    let set = thumbnailWaiters.get(id);
+    if (!set) {
+      set = new Set();
+      thumbnailWaiters.set(id, set);
+    }
+    set.add(callback);
+  });
 }

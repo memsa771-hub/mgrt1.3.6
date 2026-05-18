@@ -9,10 +9,11 @@ async function getGeoip() {
 }
 import { ClientInfo } from "./types";
 import {
-  consumeThumbnailRequest,
+  isThumbnailRequested,
   hasThumbnail,
-  generateThumbnail,
   setLatestFrame,
+  notifyThumbnailGenerated,
+  requestThumbnailRegen,
 } from "./thumbnails";
 import { upsertClientRow, type ClientDbRow } from "./db";
 import { metrics } from "./metrics";
@@ -296,10 +297,12 @@ export function handleFrame(info: ClientInfo, payload: any) {
 
   if (safeFormat) {
     const now = Date.now();
-    const thumbnailRequested = consumeThumbnailRequest(info.id);
+    const thumbnailRequested = isThumbnailRequested(info.id);
     if (thumbnailRequested || !hasThumbnail(info.id)) {
       setLatestFrame(info.id, bytes, safeFormat);
-      void generateThumbnail(info.id);
+      void requestThumbnailRegen(info.id).then((ok) => {
+        if (ok) notifyThumbnailGenerated(info.id);
+      });
     }
     info.lastSeen = now;
     info.online = true;

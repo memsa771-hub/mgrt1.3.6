@@ -136,12 +136,12 @@ func setStretchBltMode(hdc uintptr, mode int32) {
 }
 
 func bitBltWithFallback(hdcMem, hdcScreen uintptr, bounds image.Rectangle, w, h int) bool {
-	return bitBlt(hdcMem, 0, 0, int32(w), int32(h), hdcScreen, int32(bounds.Min.X), int32(bounds.Min.Y), SRCCOPY)
+	return bitBlt(hdcMem, 0, 0, int32(w), int32(h), hdcScreen, int32(bounds.Min.X), int32(bounds.Min.Y), SRCCOPY|CAPTUREBLT)
 }
 
 func stretchBltCapture(hdcMem, hdcScreen uintptr, bounds image.Rectangle, srcW, srcH, dstW, dstH int) bool {
 	setStretchBltMode(hdcMem, COLORONCOLOR)
-	return stretchBlt(hdcMem, 0, 0, int32(dstW), int32(dstH), hdcScreen, int32(bounds.Min.X), int32(bounds.Min.Y), int32(srcW), int32(srcH), SRCCOPY)
+	return stretchBlt(hdcMem, 0, 0, int32(dstW), int32(dstH), hdcScreen, int32(bounds.Min.X), int32(bounds.Min.Y), int32(srcW), int32(srcH), SRCCOPY|CAPTUREBLT)
 }
 
 var dpiAwareOnce sync.Once

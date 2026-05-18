@@ -253,9 +253,10 @@ export async function handleClientRoutes(
     if (!canUserAccessClient(user.userId, user.role, clientId)) {
       return new Response("Forbidden: Client access denied", { status: 403 });
     }
-    const { generateThumbnail, markThumbnailRequested, getThumbnailVersion } = await import("../../thumbnails");
+    const { requestThumbnailRegen, markThumbnailRequested, getThumbnailVersion, waitForThumbnail, clearThumbnailRequest } = await import("../../thumbnails");
     markThumbnailRequested(clientId);
     const target = clientManager.getClient(clientId);
+    const beforeVersion = getThumbnailVersion(clientId);
     if (target?.online) {
       const commandId = uuidv4();
       target.ws.send(
@@ -268,10 +269,16 @@ export async function handleClientRoutes(
       );
       metrics.recordCommand("screenshot");
     }
-    const success = await generateThumbnail(clientId);
+    const fresh = target?.online ? await waitForThumbnail(clientId, 2500) : false;
+    if (fresh) {
+      await new Promise((r) => setTimeout(r, 300));
+    } else {
+      await requestThumbnailRegen(clientId);
+    }
+    clearThumbnailRequest(clientId);
     const version = getThumbnailVersion(clientId);
     return Response.json(
-      { ok: true, updated: success, version },
+      { ok: true, updated: version > beforeVersion, version },
       { headers: deps.CORS_HEADERS },
     );
   }

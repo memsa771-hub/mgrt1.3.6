@@ -8,6 +8,7 @@ import {
   monitorsBadge,
   shortId,
 } from "./viewUtils.js";
+import { applyImageSrcSmooth } from "./thumbnail-loader.js";
 
 function escapeHtml(text) {
   const div = document.createElement("div");
@@ -433,6 +434,23 @@ export function createRenderer({
     return `${currentLayout}|${c.id}|${!!c.online}|${c.lastSeen}|${c.pingMs}|${c.host}|${c.user}|${c.os}|${c.arch}|${c.version}|${c.monitors}|${c.country}|${c.nickname}|${c.customTag}|${c.customTagNote}|${!!c.bookmarked}|${!!c.isAdmin}|${c.elevation}|${c.cpu}|${c.gpu}|${c.ram}|${c.hwid}|${c.disconnectReason}|${c.disconnectDetail}|${c.groupId}|${c.groupName}|${c.groupColor}|${!!c.notificationsMuted}`;
   }
 
+  function cardThumbDigest(c) {
+    return `${!!c.hasThumbnail}|${Number(c.thumbnailVersion) || 0}`;
+  }
+
+  function softThumbUpdate(card, client) {
+    const host = card.querySelector("[data-thumb-host]");
+    if (!host) return;
+    const newVersion = Number(client.thumbnailVersion) || 0;
+    host.dataset.thumbVersion = String(newVersion);
+    host.dataset.thumbOnline = client.online ? "1" : "0";
+    if (!client.hasThumbnail) return;
+    const img = host.querySelector("img[data-thumb-img]");
+    if (!img) return;
+    const url = `/api/clients/${encodeURIComponent(client.id)}/thumbnail${newVersion ? `?v=${newVersion}` : ""}`;
+    applyImageSrcSmooth(img, url);
+  }
+
   function renderMerge(data, options = {}) {
     setupGridDelegation();
     ensureLayoutScaffold();
@@ -463,9 +481,18 @@ export function createRenderer({
       if (existing) {
         if (existing.classList.contains("card-uninstalling")) return;
         const digest = cardDigest(client);
-        if (existing._cardDigest === digest) return;
-        existing._cardDigest = digest;
-        updateCard(existing, client);
+        const thumbDigest = cardThumbDigest(client);
+        const structureChanged = existing._cardDigest !== digest;
+        const thumbChanged = existing._thumbDigest !== thumbDigest;
+        if (!structureChanged && !thumbChanged) return;
+        if (structureChanged) {
+          existing._cardDigest = digest;
+          existing._thumbDigest = thumbDigest;
+          updateCard(existing, client);
+        } else {
+          existing._thumbDigest = thumbDigest;
+          softThumbUpdate(existing, client);
+        }
         return;
       }
       newClients.push(client);
@@ -550,6 +577,7 @@ export function createRenderer({
           : buildRowA(client, options);
 
     node._cardDigest = cardDigest(client);
+    node._thumbDigest = cardThumbDigest(client);
 
     if (options.animate && currentLayout !== "table") {
       node.classList.add("card-animate");
