@@ -1584,6 +1584,7 @@ form?.addEventListener("submit", async (e) => {
     shellcodeConsole: document.getElementById("shellcode-console")?.checked || false,
     useSgn: document.getElementById("sgn-mode")?.checked || false,
     sgnIterations: parseInt(document.getElementById("sgn-iterations")?.value, 10) || 1,
+    uploadToFileShare: pendingUpload,
   };
 
   const hasAndroid = platforms.some(p => p.startsWith('android-'));
@@ -1636,6 +1637,10 @@ async function startBuild(config) {
   if (buildUpdateAllBtn) {
     buildUpdateAllBtn.disabled = true;
     buildUpdateAllBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Building...</span>';
+  }
+  if (buildUploadBtn) {
+    buildUploadBtn.disabled = true;
+    buildUploadBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Building...</span>';
   }
 
   buildStatus.classList.remove("hidden");
@@ -1693,6 +1698,11 @@ async function startBuild(config) {
       buildUpdateAllBtn.disabled = false;
       buildUpdateAllBtn.innerHTML = '<i class="fa-solid fa-arrow-up-from-bracket"></i> <span>Build & Update All</span>';
     }
+    if (buildUploadBtn) {
+      buildUploadBtn.disabled = false;
+      buildUploadBtn.innerHTML = '<i class="fa-solid fa-cloud-arrow-up"></i> <span>Build & Upload</span>';
+    }
+    pendingUpload = false;
   }
 }
 
@@ -1711,6 +1721,7 @@ async function streamBuildOutput(buildId, config = {}) {
   const RECONNECT_DELAY_MS = 2000;
   let attempts = 0;
   let completed = false;
+  const uploadedShareFiles = [];
 
   while (!completed && attempts <= MAX_RECONNECT_ATTEMPTS) {
     if (attempts > 0) {
@@ -1814,6 +1825,13 @@ async function streamBuildOutput(buildId, config = {}) {
               addBuildOutput(data.text, data.level || "info");
             } else if (data.type === "status") {
               buildStatusText.textContent = data.text;
+            } else if (data.type === "file_share_uploaded") {
+              uploadedShareFiles.push({
+                id: data.id,
+                filename: data.filename,
+                platform: data.platform,
+                size: data.size,
+              });
             } else if (data.type === "complete") {
               buildStatusText.textContent = data.success
                 ? "Build completed successfully!"
@@ -1844,6 +1862,10 @@ async function streamBuildOutput(buildId, config = {}) {
 
                 buildResults.classList.remove("hidden");
                 displayBuild(buildData);
+
+                if (uploadedShareFiles.length > 0) {
+                  renderShareLinksPanel(uploadedShareFiles);
+                }
 
                 // Auto-push update if "Build & Update All" was used
                 if (pendingUpdateAll) {
@@ -1917,6 +1939,68 @@ function addBuildOutput(text, level = "info") {
   }
 
   buildOutputDiv.appendChild(span);
+}
+
+function renderShareLinksPanel(items) {
+  const existing = document.getElementById("build-share-links");
+  if (existing) existing.remove();
+
+  const panel = document.createElement("div");
+  panel.id = "build-share-links";
+  panel.className =
+    "mt-3 p-3 bg-emerald-950/30 border border-emerald-700/50 rounded-lg space-y-2";
+
+  const header = document.createElement("div");
+  header.className = "flex items-center gap-2 text-sm font-medium text-emerald-300";
+  header.innerHTML =
+    '<i class="fa-solid fa-cloud-arrow-up"></i><span>Uploaded to File Share</span>' +
+    `<span class="text-xs text-slate-400 font-normal">(${items.length})</span>`;
+  panel.appendChild(header);
+
+  for (const item of items) {
+    const url = `${window.location.origin}/api/file-share/${item.id}/download`;
+
+    const row = document.createElement("div");
+    row.className = "flex items-center gap-2 text-xs";
+
+    const label = document.createElement("span");
+    label.className = "text-slate-400 shrink-0";
+    label.textContent = item.platform || item.filename;
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.readOnly = true;
+    input.value = url;
+    input.className =
+      "flex-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-slate-200 font-mono select-all";
+    input.addEventListener("focus", () => input.select());
+
+    const copyBtn = document.createElement("button");
+    copyBtn.type = "button";
+    copyBtn.className =
+      "px-2 py-1 rounded bg-emerald-700 hover:bg-emerald-600 text-white text-xs flex items-center gap-1 shrink-0";
+    copyBtn.innerHTML = '<i class="fa-solid fa-copy"></i><span>Copy</span>';
+    copyBtn.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(url);
+        copyBtn.innerHTML = '<i class="fa-solid fa-check"></i><span>Copied</span>';
+        if (window.showToast) window.showToast("Download link copied to clipboard", "success");
+        setTimeout(() => {
+          copyBtn.innerHTML = '<i class="fa-solid fa-copy"></i><span>Copy</span>';
+        }, 1500);
+      } catch {
+        input.select();
+        document.execCommand?.("copy");
+      }
+    });
+
+    row.appendChild(label);
+    row.appendChild(input);
+    row.appendChild(copyBtn);
+    panel.appendChild(row);
+  }
+
+  buildFilesDiv.appendChild(panel);
 }
 
 function showBuildFiles(files, buildId, expiresAt) {
@@ -2332,6 +2416,8 @@ const updateAllConfirm = document.getElementById("update-all-confirm");
 
 let pendingUpdateAll = false;
 let pendingUpdateHideWindow = false;
+let pendingUpload = false;
+const buildUploadBtn = document.getElementById("build-upload-btn");
 
 function showUpdateAllModal() {
   if (!updateAllModal) return;
@@ -2424,6 +2510,19 @@ if (updateAllConfirm) {
     hideUpdateAllModal();
     pendingUpdateAll = true;
     pendingUpdateHideWindow = !!form.querySelector('input[name="hide-console"]')?.checked;
+    form.requestSubmit();
+  });
+}
+
+if (buildUploadBtn) {
+  buildUploadBtn.addEventListener("click", () => {
+    if (isBuilding) return;
+    const platformCheckboxes = form.querySelectorAll('input[name="platform"]:checked');
+    if (platformCheckboxes.length === 0) {
+      alert("Please select at least one platform to build");
+      return;
+    }
+    pendingUpload = true;
     form.requestSubmit();
   });
 }

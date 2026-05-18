@@ -251,6 +251,7 @@ const startBuildProcess = (buildId: string, buildConfig: any) =>
   runBuildProcess(buildId, buildConfig, {
     generateBuildMutex,
     sanitizeOutputName,
+    fileShareRoot: FILE_SHARE_ROOT,
   });
 
 const pendingHttpDownloads = new Map<string, PendingHttpDownload>();

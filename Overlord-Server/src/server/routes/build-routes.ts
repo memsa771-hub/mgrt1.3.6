@@ -24,6 +24,7 @@ import { logger } from "../../logger";
 import { normalizeClientOs } from "../deploy-utils";
 import { canUserBuild, recordBuildStart, recordBuildEnd } from "../../build-rate-limit";
 import { getConfig } from "../../config";
+import { canUploadFiles } from "../../users";
 import { addBuildToBanlist, removeBuildFromBanlist } from "../build-signing";
 import path from "path";
 import fs from "fs";
@@ -118,6 +119,7 @@ export async function handleBuildRoutes(
         useSgn,
         sgnIterations,
         fetchPublicIP,
+        uploadToFileShare,
       } = body;
 
       if (!platforms || !Array.isArray(platforms) || platforms.length === 0) {
@@ -345,6 +347,14 @@ export async function handleBuildRoutes(
         safeBoundFiles = validated;
       }
 
+      const safeUploadToFileShare = !!uploadToFileShare;
+      if (safeUploadToFileShare && !canUploadFiles(user.userId, user.role)) {
+        return Response.json(
+          { error: "You do not have permission to upload files" },
+          { status: 403 },
+        );
+      }
+
       const rateLimitActive = getConfig().registration.mode !== "off";
       if (rateLimitActive) recordBuildStart(user.userId);
 
@@ -392,6 +402,7 @@ export async function handleBuildRoutes(
         useSgn: !!useSgn,
         sgnIterations: Math.max(1, Math.min(50, Math.floor(Number(sgnIterations) || 1))),
         fetchPublicIP: !!fetchPublicIP,
+        uploadToFileShare: safeUploadToFileShare,
       }).finally(() => {
         if (rateLimitActive) recordBuildEnd(user.userId);
       });
