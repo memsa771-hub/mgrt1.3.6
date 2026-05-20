@@ -308,10 +308,9 @@ describe("permission-groups routes — audit log shape", () => {
       username: admin.user.username,
       pageSize: 10,
     });
-    // The most recent entry should reflect the second swap.
     const entry = logs
       .filter((l) => l.details && l.details.includes(`"targetUserId":${target.user.id}`))
-      .sort((a, b) => b.timestamp - a.timestamp)[0];
+      .sort((a, b) => b.timestamp - a.timestamp || (b.id ?? 0) - (a.id ?? 0))[0];
     expect(entry).toBeDefined();
     const parsed = JSON.parse(entry!.details!);
     expect(parsed.permissionsAdded).toEqual(["clients:disconnect"]);
