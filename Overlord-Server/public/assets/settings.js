@@ -891,6 +891,7 @@ function initSettingsSidebar() {
     // (nav-hidden toggle, viewport resize, dropdown opened) doesn't leave the
     // section partly hidden under the nav.
     updateSettingsScrollOffset();
+    _clickLockUntil = Date.now() + 1200;
     setActive(link);
     target.scrollIntoView({ behavior: "smooth", block: "start" });
     history.replaceState(null, "", `#${id}`);
@@ -898,7 +899,9 @@ function initSettingsSidebar() {
 
   // Active-section highlight via IntersectionObserver + page-bottom override.
   const visible = new Set();
+  let _clickLockUntil = 0;
   function updateActive() {
+    if (Date.now() < _clickLockUntil) return;
     // Special case: if the user has scrolled as far as the page allows, the
     // last visible section becomes active (otherwise the topmost-visible
     // heuristic would leave shorter trailing sections — like Custom CSS or
@@ -1706,6 +1709,129 @@ function initThumbnailHandlers() {
   if (form) form.addEventListener("submit", saveThumbnailSettings);
 }
 
+// ── Server Health ─────────────────────────────────────────────────────────
+
+function formatBytes(bytes) {
+  if (!bytes || bytes <= 0) return "0 B";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1);
+  return `${(bytes / Math.pow(k, i)).toFixed(i > 0 ? 1 : 0)} ${sizes[i]}`;
+}
+
+function formatUptime(totalSeconds) {
+  const s = Math.floor(totalSeconds);
+  const days = Math.floor(s / 86400);
+  const hours = Math.floor((s % 86400) / 3600);
+  const mins = Math.floor((s % 3600) / 60);
+  const secs = s % 60;
+  if (days > 0) return `${days}d ${hours}h ${mins}m`;
+  if (hours > 0) return `${hours}h ${mins}m ${secs}s`;
+  if (mins > 0) return `${mins}m ${secs}s`;
+  return `${secs}s`;
+}
+
+async function loadHealthStats() {
+  const loading = document.getElementById("health-loading");
+  const content = document.getElementById("health-content");
+  if (loading) { loading.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i>Loading...'; loading.classList.remove("hidden"); }
+  if (content) content.classList.add("hidden");
+
+  try {
+    const res = await fetch("/api/settings/health", { credentials: "include" });
+    if (!res.ok) {
+      if (loading) loading.textContent = "Failed to load health stats.";
+      return;
+    }
+    const data = await res.json();
+
+    const mem = data.memory || {};
+    const rss = mem.rss || 0;
+    const heapUsed = mem.heapUsed || 0;
+    const ext = (mem.external || 0) + (mem.arrayBuffers || 0);
+
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+
+    set("health-uptime", formatUptime(data.uptime || 0));
+    set("health-rss", formatBytes(rss));
+    set("health-heap-used", formatBytes(heapUsed));
+    set("health-external", formatBytes(ext));
+    const heapPct = rss > 0 ? Math.min(100, (heapUsed / rss) * 100) : 0;
+    const extPct  = rss > 0 ? Math.min(100 - heapPct, (ext / rss) * 100) : 0;
+
+    const heapBar = document.getElementById("health-heap-bar");
+    const extBar  = document.getElementById("health-ext-bar");
+    const heapBarLabel = document.getElementById("health-heap-bar-label");
+    const barLabel = document.getElementById("health-bar-label");
+
+    if (heapBar) {
+      heapBar.style.width = `${heapPct.toFixed(1)}%`;
+      heapBar.title = `Heap: ${formatBytes(heapUsed)} (${heapPct.toFixed(1)}% of RSS)`;
+    }
+    if (extBar) {
+      extBar.style.width = `${extPct.toFixed(1)}%`;
+      extBar.title = `External/Buffers: ${formatBytes(ext)} (${extPct.toFixed(1)}% of RSS)`;
+    }
+    if (heapBarLabel) {
+      heapBarLabel.textContent = `${heapPct.toFixed(0)}%`;
+      heapBarLabel.classList.toggle("hidden", heapPct < 8);
+    }
+    if (barLabel) {
+      barLabel.textContent = rss > 0
+        ? `${formatBytes(heapUsed)} heap + ${formatBytes(ext)} ext / ${formatBytes(rss)} RSS`
+        : "-";
+    }
+
+    const t = data.components?.thumbnails || {};
+    set("h-thumb-count", `${t.cachedCount ?? 0} / ${t.cacheMax ?? 0}`);
+    set("h-thumb-bytes", formatBytes(t.cachedBytes || 0));
+    set("h-thumb-frames", t.pendingFrames ?? 0);
+    set("h-thumb-gen", `${t.genActive ?? 0} active, ${t.genQueued ?? 0} queued`);
+    set("h-thumb-max", t.cacheMax ?? 0);
+
+    const c = data.components?.clients || {};
+    set("h-clients-mem", c.inMemory ?? 0);
+    set("h-clients-online", c.online ?? 0);
+
+    const db = data.components?.database || {};
+    set("h-db-size", formatBytes(db.fileSizeBytes || 0));
+
+    if (loading) loading.classList.add("hidden");
+    if (content) content.classList.remove("hidden");
+  } catch (e) {
+    if (loading) loading.textContent = `Error: ${e.message}`;
+  }
+}
+
+async function runGC() {
+  const gcBtn = document.getElementById("health-gc-btn");
+  const msgEl = document.getElementById("health-gc-message");
+  if (gcBtn) gcBtn.disabled = true;
+  try {
+    const res = await fetch("/api/settings/gc", { method: "POST", credentials: "include" });
+    const data = await res.json().catch(() => ({}));
+    if (msgEl) {
+      msgEl.textContent = res.ok
+        ? `GC complete — freed ~${formatBytes(data.freedBytes || 0)}`
+        : `GC failed: ${data.error || res.statusText}`;
+      msgEl.classList.remove("hidden");
+      setTimeout(() => msgEl.classList.add("hidden"), 6000);
+    }
+    if (res.ok) await loadHealthStats();
+  } catch (e) {
+    if (msgEl) { msgEl.textContent = `Error: ${e.message}`; msgEl.classList.remove("hidden"); }
+  } finally {
+    if (gcBtn) gcBtn.disabled = false;
+  }
+}
+
+function initHealthHandlers() {
+  const refreshBtn = document.getElementById("health-refresh-btn");
+  const gcBtn = document.getElementById("health-gc-btn");
+  if (refreshBtn) refreshBtn.addEventListener("click", loadHealthStats);
+  if (gcBtn) gcBtn.addEventListener("click", runGC);
+}
+
 async function init() {
   try {
     await loadCurrentUser();
@@ -1729,9 +1855,11 @@ async function init() {
       await loadRegistrationSettings();
       await loadBuildRateLimitSettings();
       await loadThumbnailSettings();
+      await loadHealthStats();
       initRegistrationHandlers();
       initBuildRateLimitHandlers();
       initThumbnailHandlers();
+      initHealthHandlers();
     }
 
     passwordForm.addEventListener("submit", updatePassword);

@@ -216,6 +216,28 @@ export function clearThumbnailRequest(id: string) {
   thumbnailRequests.delete(id);
 }
 
+export function getThumbnailStats(): {
+  cachedCount: number;
+  cachedBytes: number;
+  pendingFrames: number;
+  genActive: number;
+  genQueued: number;
+  genStateTracked: number;
+  cacheMax: number;
+} {
+  let cachedBytes = 0;
+  for (const rec of thumbnails.values()) cachedBytes += rec.bytes.byteLength;
+  return {
+    cachedCount: thumbnails.size,
+    cachedBytes,
+    pendingFrames: latestFrames.size,
+    genActive: _activeThumbnailGen,
+    genQueued: _thumbnailGenQueue.length,
+    genStateTracked: thumbnailGenState.size,
+    cacheMax: THUMBNAIL_CACHE_MAX,
+  };
+}
+
 export function consumeThumbnailRequest(id: string, windowMs = 5000): boolean {
   const ts = thumbnailRequests.get(id);
   if (!ts) return false;

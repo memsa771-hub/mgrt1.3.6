@@ -2494,3 +2494,11 @@ export function recordAutoDeployRun(deployId: string, clientId: string) {
     Date.now(),
   );
 }
+
+export function getDatabaseFileSizeBytes(): number {
+  try {
+    return Bun.file(dbPath).size;
+  } catch {
+    return 0;
+  }
+}

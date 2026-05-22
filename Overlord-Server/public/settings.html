@@ -98,6 +98,7 @@
             <a data-target="build-rate-limit-section" class="settings-nav-link" data-permission="system:configure" style="--accent: 251 146 60"><i class="fa-solid fa-gauge-high w-4 text-orange-400"></i><span>Build Rate Limit</span></a>
             <a data-target="section-appearance"       class="settings-nav-link" data-permission="system:configure" style="--accent: 232 121 249"><i class="fa-solid fa-paintbrush w-4 text-fuchsia-400"></i><span>Custom CSS</span></a>
             <a data-target="export-import-section"    class="settings-nav-link" data-permission="system:configure" style="--accent: 251 191 36"><i class="fa-solid fa-file-export w-4 text-amber-400"></i><span>Export / Import</span></a>
+            <a data-target="section-health"           class="settings-nav-link" data-permission="system:configure" style="--accent: 34 211 238"><i class="fa-solid fa-heart-pulse w-4 text-cyan-400"></i><span>Server Health</span></a>
           </nav>
         </aside>
 
@@ -988,6 +989,123 @@
 
         <p id="export-import-message" class="hidden text-sm rounded-lg px-3 py-2 border"></p>
       </section>
+
+        <!-- Server Health -->
+        <section id="section-health" class="bg-slate-900/60 border border-slate-800 rounded-xl p-5 space-y-4 settings-section hidden" data-permission="system:configure">
+          <div class="flex items-center justify-between gap-3 flex-wrap">
+            <div class="flex items-center gap-3">
+              <div class="flex items-center justify-center w-9 h-9 rounded-lg bg-cyan-500/10 border border-cyan-500/30">
+                <i class="fa-solid fa-heart-pulse text-cyan-400"></i>
+              </div>
+              <div>
+                <h2 class="text-lg font-semibold">Server Health</h2>
+                <p class="text-sm text-slate-400">Memory usage, per-component breakdown, and process stats.</p>
+              </div>
+            </div>
+            <div class="flex items-center gap-2">
+              <button id="health-gc-btn" type="button"
+                class="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-sm transition-colors text-slate-300">
+                <i class="fa-solid fa-broom"></i>Force GC
+              </button>
+              <button id="health-refresh-btn" type="button"
+                class="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-sm transition-colors text-slate-300">
+                <i class="fa-solid fa-rotate"></i>Refresh
+              </button>
+            </div>
+          </div>
+
+          <div id="health-loading" class="text-slate-500 text-sm py-4 text-center">
+            <i class="fa-solid fa-spinner fa-spin mr-2"></i>Loading...
+          </div>
+
+          <div id="health-content" class="hidden space-y-4">
+            <!-- Summary cards -->
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+              <div class="rounded-lg bg-slate-900 border border-slate-800 px-3 py-2">
+                <div class="text-slate-400 text-xs mb-0.5">Uptime</div>
+                <div id="health-uptime" class="font-medium font-mono">-</div>
+              </div>
+              <div class="rounded-lg bg-slate-900 border border-slate-800 px-3 py-2">
+                <div class="text-slate-400 text-xs mb-0.5">RSS (Total)</div>
+                <div id="health-rss" class="font-medium font-mono">-</div>
+              </div>
+              <div class="rounded-lg bg-slate-900 border border-slate-800 px-3 py-2">
+                <div class="text-slate-400 text-xs mb-0.5">Heap Used</div>
+                <div id="health-heap-used" class="font-medium font-mono">-</div>
+              </div>
+              <div class="rounded-lg bg-slate-900 border border-slate-800 px-3 py-2">
+                <div class="text-slate-400 text-xs mb-0.5">External / Buffers</div>
+                <div id="health-external" class="font-medium font-mono">-</div>
+              </div>
+            </div>
+
+            <!-- Memory bar -->
+            <div>
+              <div class="flex justify-between text-xs mb-1.5">
+                <span class="text-slate-400">RSS memory breakdown</span>
+                <span id="health-bar-label" class="font-mono text-slate-300">-</span>
+              </div>
+              <!-- Stacked bar: heap | external/buffers | free -->
+              <div class="h-5 rounded-lg bg-slate-700 overflow-hidden flex" style="min-width:0">
+                <div id="health-heap-bar"
+                  class="h-full bg-sky-500 transition-all duration-700 flex items-center justify-center overflow-hidden"
+                  style="width:0%" title="JS Heap">
+                  <span id="health-heap-bar-label" class="text-white text-[10px] font-mono font-semibold leading-none px-1 hidden"></span>
+                </div>
+                <div id="health-ext-bar"
+                  class="h-full bg-violet-500 transition-all duration-700"
+                  style="width:0%" title="External / Buffers"></div>
+              </div>
+              <!-- Legend -->
+              <div class="flex items-center gap-4 mt-2 text-xs text-slate-400">
+                <span class="flex items-center gap-1.5"><span class="inline-block w-2.5 h-2.5 rounded-sm bg-sky-500"></span>Heap used</span>
+                <span class="flex items-center gap-1.5"><span class="inline-block w-2.5 h-2.5 rounded-sm bg-violet-500"></span>External / Buffers</span>
+                <span class="flex items-center gap-1.5"><span class="inline-block w-2.5 h-2.5 rounded-sm bg-slate-700"></span>Other (native, stack)</span>
+              </div>
+            </div>
+
+            <!-- Component breakdown -->
+            <div>
+              <p class="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Components</p>
+              <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <!-- Thumbnails -->
+                <div class="rounded-lg bg-slate-900 border border-slate-800 p-3 space-y-2">
+                  <div class="flex items-center gap-2 text-sm font-medium text-slate-200">
+                    <i class="fa-solid fa-images text-sky-400 text-xs w-3"></i>Thumbnail Cache
+                  </div>
+                  <div class="space-y-1 text-xs text-slate-400 font-mono">
+                    <div class="flex justify-between"><span>Cached</span><span id="h-thumb-count" class="text-slate-200">-</span></div>
+                    <div class="flex justify-between"><span>Cache size</span><span id="h-thumb-bytes" class="text-slate-200">-</span></div>
+                    <div class="flex justify-between"><span>Pending frames</span><span id="h-thumb-frames" class="text-slate-200">-</span></div>
+                    <div class="flex justify-between"><span>Gen active / queued</span><span id="h-thumb-gen" class="text-slate-200">-</span></div>
+                    <div class="flex justify-between text-slate-500"><span>Capacity</span><span id="h-thumb-max">-</span></div>
+                  </div>
+                </div>
+                <!-- Clients -->
+                <div class="rounded-lg bg-slate-900 border border-slate-800 p-3 space-y-2">
+                  <div class="flex items-center gap-2 text-sm font-medium text-slate-200">
+                    <i class="fa-solid fa-users text-emerald-400 text-xs w-3"></i>Connected Clients
+                  </div>
+                  <div class="space-y-1 text-xs text-slate-400 font-mono">
+                    <div class="flex justify-between"><span>In memory</span><span id="h-clients-mem" class="text-slate-200">-</span></div>
+                    <div class="flex justify-between"><span>Online (&lt;60s)</span><span id="h-clients-online" class="text-slate-200">-</span></div>
+                  </div>
+                </div>
+                <!-- Database -->
+                <div class="rounded-lg bg-slate-900 border border-slate-800 p-3 space-y-2">
+                  <div class="flex items-center gap-2 text-sm font-medium text-slate-200">
+                    <i class="fa-solid fa-database text-amber-400 text-xs w-3"></i>Database
+                  </div>
+                  <div class="space-y-1 text-xs text-slate-400 font-mono">
+                    <div class="flex justify-between"><span>File size</span><span id="h-db-size" class="text-slate-200">-</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <p id="health-gc-message" class="hidden text-xs rounded-lg px-3 py-2 border border-emerald-700 bg-emerald-900/20 text-emerald-300"></p>
+          </div>
+        </section>
 
         </div>
         <!-- /Sections -->

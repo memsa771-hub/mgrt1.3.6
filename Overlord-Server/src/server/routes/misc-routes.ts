@@ -2,7 +2,9 @@ import { authenticateRequest } from "../../auth";
 import { AuditAction, getAuditLogs, logAudit } from "../../auditLog";
 import { logger } from "../../logger";
 import { getConfig, updateSecurityConfig, updateTlsConfig, updateAppearanceConfig, updateChatConfig, getExportableConfig, importFullConfig, updateRegistrationConfig, updateBuildRateLimitConfig, updateThumbnailsConfig } from "../../config";
-import { getClientMetricsSummary, getClientMetricsSummaryForUser } from "../../db";
+import { getClientMetricsSummary, getClientMetricsSummaryForUser, getDatabaseFileSizeBytes } from "../../db";
+import { getThumbnailStats } from "../../thumbnails";
+import { getClientCount, getOnlineClients } from "../../clientManager";
 import { metrics } from "../../metrics";
 import { requirePermission } from "../../rbac";
 import { getUserTelegramChatId, setUserTelegramChatId, getUserClientAccessScope, listUserClientRuleIdsByAccess, canUserAccessClient } from "../../users";
@@ -748,6 +750,49 @@ export async function handleMiscRoutes(
 
       return Response.json({ ok: true, thumbnails: updated }, { headers: deps.CORS_HEADERS });
     }
+  }
+
+  // GET /api/settings/health
+  if (req.method === "GET" && url.pathname === "/api/settings/health") {
+    const user = await authenticateRequest(req);
+    if (!user) return new Response("Unauthorized", { status: 401 });
+    if (user.role !== "admin") return new Response("Forbidden", { status: 403 });
+
+    const mem = process.memoryUsage();
+    return Response.json({
+      memory: {
+        rss: mem.rss,
+        heapTotal: mem.heapTotal,
+        heapUsed: mem.heapUsed,
+        external: mem.external,
+        arrayBuffers: (mem as any).arrayBuffers ?? 0,
+      },
+      uptime: Math.floor(process.uptime()),
+      components: {
+        thumbnails: getThumbnailStats(),
+        clients: {
+          inMemory: getClientCount(),
+          online: getOnlineClients().length,
+        },
+        database: {
+          fileSizeBytes: getDatabaseFileSizeBytes(),
+        },
+      },
+    });
+  }
+
+  // POST /api/settings/gc
+  if (req.method === "POST" && url.pathname === "/api/settings/gc") {
+    const user = await authenticateRequest(req);
+    if (!user) return new Response("Unauthorized", { status: 401 });
+    if (user.role !== "admin") return new Response("Forbidden", { status: 403 });
+
+    const before = process.memoryUsage().heapUsed;
+    if (typeof Bun !== "undefined" && typeof (Bun as any).gc === "function") {
+      (Bun as any).gc(true);
+    }
+    const after = process.memoryUsage().heapUsed;
+    return Response.json({ ok: true, freedBytes: Math.max(0, before - after) });
   }
 
   return null;
