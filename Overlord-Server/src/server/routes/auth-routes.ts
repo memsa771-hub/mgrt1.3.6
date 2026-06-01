@@ -8,6 +8,8 @@ import {
   revokeToken,
 } from "../../auth";
 import { AuditAction, logAudit } from "../../auditLog";
+import { buildTotpUri, generateMfaSecret, verifyTotpCode } from "../../mfa";
+import { createQrSvg } from "../../qr";
 import {
   listUserSessions,
   revokeSessionById,
@@ -23,7 +25,19 @@ import {
   recordFailedAttempt,
   recordSuccessfulAttempt,
 } from "../../rateLimit";
-import { getUserById, canUserAccessClient, canUserAccessFeature, getUserFeaturePermissions, type FeatureName, ALL_FEATURES } from "../../users";
+import {
+  getUserById,
+  canUserAccessClient,
+  canUserAccessFeature,
+  getUserFeaturePermissions,
+  type FeatureName,
+  ALL_FEATURES,
+  disableUserMfa,
+  enableUserMfa,
+  getUserMfaStatus,
+  isMfaRequiredForUser,
+  setUserMfaSecret,
+} from "../../users";
 import { getUserPermissions, requirePermission } from "../../rbac";
 import { makeAuthCookie, makeAuthCookieClear } from "./auth-cookie";
 
@@ -69,10 +83,44 @@ export async function handleAuthRoutes(
       const body = await req.json();
       const username = body?.user || "";
       const password = body?.pass || "";
+      const mfaCode = typeof body?.mfaCode === "string" ? body.mfaCode : "";
 
       const user = await authenticateUser(username, password);
 
       if (user) {
+        const mfaEnabled = Boolean(user.mfa_enabled && user.mfa_secret);
+        if (mfaEnabled) {
+          if (!mfaCode) {
+            return Response.json({ ok: false, mfaRequired: true }, { status: 202 });
+          }
+          if (!verifyTotpCode(user.mfa_secret!, mfaCode)) {
+            recordFailedAttempt(ip);
+            logAudit({
+              timestamp: Date.now(),
+              username: user.username,
+              ip,
+              action: AuditAction.LOGIN_FAILED,
+              success: false,
+              errorMessage: "Invalid MFA code",
+            });
+            return Response.json({ ok: false, error: "Invalid MFA code", mfaRequired: true }, { status: 401 });
+          }
+        } else if (isMfaRequiredForUser(user)) {
+          recordFailedAttempt(ip);
+          logAudit({
+            timestamp: Date.now(),
+            username: user.username,
+            ip,
+            action: AuditAction.LOGIN_FAILED,
+            success: false,
+            errorMessage: "MFA required but not enrolled",
+          });
+          return Response.json(
+            { ok: false, error: "MFA is required for this account, but it is not enrolled yet." },
+            { status: 403 },
+          );
+        }
+
         const userAgent = req.headers.get("User-Agent") || null;
         const token = await generateToken(user, { ip, userAgent: userAgent || undefined });
         const sessionTtlSeconds = getSessionTtlSeconds();
@@ -138,6 +186,102 @@ export async function handleAuthRoutes(
       status: 401,
       headers: { "Content-Type": "application/json" },
     });
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/mfa/status") {
+    const user = await authenticateRequest(req);
+    if (!user) {
+      return Response.json({ error: "Not authenticated" }, { status: 401 });
+    }
+    const dbUser = getUserById(user.userId);
+    if (!dbUser) {
+      return Response.json({ error: "User not found" }, { status: 404 });
+    }
+    const status = getUserMfaStatus(user.userId);
+    return Response.json({
+      enabled: Boolean(status?.enabled),
+      enabledAt: status?.enabledAt || null,
+      required: isMfaRequiredForUser(dbUser),
+      policy: {
+        admins: isMfaRequiredForUser({ role: "admin" }),
+        nonAdmins: isMfaRequiredForUser({ role: "operator" }),
+      },
+    });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/mfa/setup") {
+    const user = await authenticateRequest(req);
+    if (!user) {
+      return Response.json({ error: "Not authenticated" }, { status: 401 });
+    }
+    const status = getUserMfaStatus(user.userId);
+    if (status?.enabled) {
+      return Response.json({ error: "MFA is already enabled" }, { status: 400 });
+    }
+    const secret = generateMfaSecret();
+    const result = setUserMfaSecret(user.userId, secret);
+    if (!result.success) {
+      return Response.json({ error: result.error }, { status: 400 });
+    }
+    const otpauthUrl = buildTotpUri({
+      issuer: "Overlord",
+      accountName: user.username,
+      secret,
+    });
+    return Response.json({
+      secret,
+      otpauthUrl,
+      qrSvg: createQrSvg(otpauthUrl),
+    });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/mfa/enable") {
+    const user = await authenticateRequest(req);
+    if (!user) {
+      return Response.json({ error: "Not authenticated" }, { status: 401 });
+    }
+    const body = await req.json().catch(() => ({}));
+    const code = typeof body?.code === "string" ? body.code : "";
+    const status = getUserMfaStatus(user.userId);
+    if (!status?.secret) {
+      return Response.json({ error: "Start MFA setup first" }, { status: 400 });
+    }
+    if (!verifyTotpCode(status.secret, code)) {
+      return Response.json({ error: "Invalid MFA code" }, { status: 400 });
+    }
+    const result = enableUserMfa(user.userId);
+    if (!result.success) {
+      return Response.json({ error: result.error }, { status: 400 });
+    }
+    return Response.json({ ok: true, enabled: true });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/mfa/disable") {
+    const user = await authenticateRequest(req);
+    if (!user) {
+      return Response.json({ error: "Not authenticated" }, { status: 401 });
+    }
+    const dbUser = getUserById(user.userId);
+    if (!dbUser) {
+      return Response.json({ error: "User not found" }, { status: 404 });
+    }
+    if (isMfaRequiredForUser(dbUser)) {
+      return Response.json({ error: "MFA is required by policy for this account" }, { status: 400 });
+    }
+    const body = await req.json().catch(() => ({}));
+    const currentPassword = typeof body?.currentPassword === "string" ? body.currentPassword : "";
+    const code = typeof body?.code === "string" ? body.code : "";
+    if (!currentPassword || !(await Bun.password.verify(currentPassword, dbUser.password_hash))) {
+      return Response.json({ error: "Current password is incorrect" }, { status: 400 });
+    }
+    if (dbUser.mfa_enabled && dbUser.mfa_secret && !verifyTotpCode(dbUser.mfa_secret, code)) {
+      return Response.json({ error: "Invalid MFA code" }, { status: 400 });
+    }
+    const result = disableUserMfa(user.userId);
+    if (!result.success) {
+      return Response.json({ error: result.error }, { status: 400 });
+    }
+    return Response.json({ ok: true, enabled: false });
   }
 
   if (req.method === "POST" && url.pathname === "/api/logout") {

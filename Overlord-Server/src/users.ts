@@ -22,6 +22,9 @@ export interface User {
   can_build: number;
   can_upload_files: number;
   telegram_chat_id: string | null;
+  mfa_secret: string | null;
+  mfa_enabled: number;
+  mfa_enabled_at: number | null;
 }
 
 export interface UserInfo {
@@ -36,6 +39,8 @@ export interface UserInfo {
   can_build: number;
   can_upload_files: number;
   telegram_chat_id: string | null;
+  mfa_enabled: number;
+  mfa_enabled_at: number | null;
 }
 
 export interface UserClientAccessRule {
@@ -125,10 +130,73 @@ export function getUserByUsername(username: string): User | null {
 export function listUsers(): UserInfo[] {
   const users = db
     .prepare(
-      "SELECT id, username, role, created_at, last_login, created_by, client_scope, plugin_scope, can_build, can_upload_files, telegram_chat_id FROM users ORDER BY created_at DESC",
+      "SELECT id, username, role, created_at, last_login, created_by, client_scope, plugin_scope, can_build, can_upload_files, telegram_chat_id, mfa_enabled, mfa_enabled_at FROM users ORDER BY created_at DESC",
     )
     .all() as UserInfo[];
   return users;
+}
+
+export function isMfaRequiredForUser(user: Pick<User, "role">): boolean {
+  const security = getConfig().security;
+  return user.role === "admin"
+    ? Boolean(security.mfaRequiredForAdmins)
+    : Boolean(security.mfaRequiredForNonAdmins);
+}
+
+export function getUserMfaStatus(userId: number): {
+  enabled: boolean;
+  enabledAt: number | null;
+  secret: string | null;
+} | null {
+  const row = db
+    .prepare("SELECT mfa_enabled, mfa_enabled_at, mfa_secret FROM users WHERE id = ?")
+    .get(userId) as
+      | { mfa_enabled: number; mfa_enabled_at: number | null; mfa_secret: string | null }
+      | undefined;
+  if (!row) return null;
+  return {
+    enabled: Boolean(row.mfa_enabled),
+    enabledAt: row.mfa_enabled_at || null,
+    secret: row.mfa_secret || null,
+  };
+}
+
+export function setUserMfaSecret(userId: number, secret: string): { success: boolean; error?: string } {
+  try {
+    db.prepare("UPDATE users SET mfa_secret = ?, mfa_enabled = 0, mfa_enabled_at = NULL WHERE id = ?").run(
+      secret,
+      userId,
+    );
+    return { success: true };
+  } catch (err: any) {
+    logger.error("[users] setUserMfaSecret error:", err);
+    return { success: false, error: err.message || "Failed to update MFA secret" };
+  }
+}
+
+export function enableUserMfa(userId: number): { success: boolean; error?: string } {
+  try {
+    db.prepare("UPDATE users SET mfa_enabled = 1, mfa_enabled_at = ? WHERE id = ?").run(
+      Date.now(),
+      userId,
+    );
+    return { success: true };
+  } catch (err: any) {
+    logger.error("[users] enableUserMfa error:", err);
+    return { success: false, error: err.message || "Failed to enable MFA" };
+  }
+}
+
+export function disableUserMfa(userId: number): { success: boolean; error?: string } {
+  try {
+    db.prepare("UPDATE users SET mfa_secret = NULL, mfa_enabled = 0, mfa_enabled_at = NULL WHERE id = ?").run(
+      userId,
+    );
+    return { success: true };
+  } catch (err: any) {
+    logger.error("[users] disableUserMfa error:", err);
+    return { success: false, error: err.message || "Failed to disable MFA" };
+  }
 }
 
 export function getUserClientAccessScope(userId: number): ClientAccessScope {

@@ -216,6 +216,14 @@ export function initializeUserSchema(): void {
         );
       },
     },
+    {
+      id: "013_users_mfa",
+      run: () => {
+        addColumnIfMissing("users", `mfa_secret TEXT DEFAULT NULL`);
+        addColumnIfMissing("users", `mfa_enabled INTEGER NOT NULL DEFAULT 0`);
+        addColumnIfMissing("users", `mfa_enabled_at INTEGER DEFAULT NULL`);
+      },
+    },
   ];
 
   runMigrations(userMigrations);

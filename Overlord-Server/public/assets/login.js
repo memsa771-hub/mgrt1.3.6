@@ -1,6 +1,8 @@
 const form = document.getElementById("login-form");
 const user = document.getElementById("user");
 const pass = document.getElementById("pass");
+const mfaGroup = document.getElementById("mfa-group");
+const mfaCode = document.getElementById("mfa-code");
 const errEl = document.getElementById("error");
 
 (async () => {
@@ -218,8 +220,25 @@ form?.addEventListener("submit", async (e) => {
     const res = await fetch("/api/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ user: user.value, pass: pass.value }),
+      body: JSON.stringify({
+        user: user.value,
+        pass: pass.value,
+        mfaCode: mfaCode?.value || "",
+      }),
     });
+
+    if (res.status === 202) {
+      const data = await res.json().catch(() => ({}));
+      if (data.mfaRequired) {
+        if (mfaGroup) mfaGroup.style.display = "";
+        if (mfaCode) {
+          mfaCode.required = true;
+          mfaCode.focus();
+        }
+        errEl.textContent = "Enter your authenticator code to continue.";
+        return;
+      }
+    }
 
     if (!res.ok) {
       const data = await res.json();

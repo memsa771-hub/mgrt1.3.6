@@ -49,6 +49,8 @@ describe("security settings", () => {
       loginWindowMinutes: 0,
       loginLockoutMinutes: 0,
       passwordMinLength: 2,
+      mfaRequiredForAdmins: true,
+      mfaRequiredForNonAdmins: true,
     });
 
     expect(updated.sessionTtlHours).toBe(24 * 30);
@@ -56,5 +58,7 @@ describe("security settings", () => {
     expect(updated.loginWindowMinutes).toBe(1);
     expect(updated.loginLockoutMinutes).toBe(1);
     expect(updated.passwordMinLength).toBe(6);
+    expect(updated.mfaRequiredForAdmins).toBe(true);
+    expect(updated.mfaRequiredForNonAdmins).toBe(true);
   });
 });

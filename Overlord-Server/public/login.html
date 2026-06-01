@@ -57,6 +57,22 @@
             />
           </div>
         </div>
+        <div id="mfa-group" class="form-group" style="display: none">
+          <label class="label">Authenticator Code</label>
+          <div class="input-row input-animated">
+            <i class="fa-solid fa-shield-halved"></i
+            ><input
+              id="mfa-code"
+              name="mfa-code"
+              type="text"
+              inputmode="numeric"
+              autocomplete="one-time-code"
+              maxlength="6"
+              pattern="[0-9]{6}"
+              placeholder="6-digit code"
+            />
+          </div>
+        </div>
         <button type="submit" class="button primary full login-btn">
           <span class="btn-text">Sign in</span>
           <i class="fa-solid fa-arrow-right btn-icon"></i>

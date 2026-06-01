@@ -7,7 +7,7 @@ import { getThumbnailStats } from "../../thumbnails";
 import { getClientCount, getOnlineClients } from "../../clientManager";
 import { metrics } from "../../metrics";
 import { requirePermission } from "../../rbac";
-import { getUserTelegramChatId, setUserTelegramChatId, getUserClientAccessScope, listUserClientRuleIdsByAccess, canUserAccessClient } from "../../users";
+import { getUserTelegramChatId, setUserTelegramChatId, getUserClientAccessScope, listUserClientRuleIdsByAccess, canUserAccessClient, getUserById } from "../../users";
 import { runCertbotSetup } from "../certbot-setup";
 import {
   getActiveProxies,
@@ -131,6 +131,16 @@ export async function handleMiscRoutes(
         return Response.json({ error: "Invalid JSON" }, { status: 400 });
       }
 
+      if (Boolean(body?.mfaRequiredForAdmins)) {
+        const dbUser = getUserById(user.userId);
+        if (!dbUser?.mfa_enabled) {
+          return Response.json(
+            { error: "Enable MFA on your own admin account before requiring it for admins." },
+            { status: 400 },
+          );
+        }
+      }
+
       const updated = await updateSecurityConfig({
         sessionTtlHours: Number(body?.sessionTtlHours),
         loginMaxAttempts: Number(body?.loginMaxAttempts),
@@ -141,6 +151,8 @@ export async function handleMiscRoutes(
         passwordRequireLowercase: Boolean(body?.passwordRequireLowercase),
         passwordRequireNumber: Boolean(body?.passwordRequireNumber),
         passwordRequireSymbol: Boolean(body?.passwordRequireSymbol),
+        mfaRequiredForAdmins: Boolean(body?.mfaRequiredForAdmins),
+        mfaRequiredForNonAdmins: Boolean(body?.mfaRequiredForNonAdmins),
       });
 
       logAudit({

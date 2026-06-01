@@ -55,6 +55,8 @@ export interface Config {
     passwordRequireLowercase: boolean;
     passwordRequireNumber: boolean;
     passwordRequireSymbol: boolean;
+    mfaRequiredForAdmins: boolean;
+    mfaRequiredForNonAdmins: boolean;
   };
   enrollment: {
     requireApproval: boolean;
@@ -140,6 +142,8 @@ const DEFAULT_CONFIG: Config = {
     passwordRequireLowercase: false,
     passwordRequireNumber: false,
     passwordRequireSymbol: false,
+    mfaRequiredForAdmins: false,
+    mfaRequiredForNonAdmins: false,
   },
   enrollment: {
     requireApproval: true,
@@ -506,6 +510,14 @@ export function loadConfig(): Config {
         String(process.env.OVERLORD_PASSWORD_REQUIRE_SYMBOL || "").toLowerCase() === "true" ||
         fileConfig.security?.passwordRequireSymbol ||
         DEFAULT_CONFIG.security.passwordRequireSymbol,
+      mfaRequiredForAdmins:
+        String(process.env.OVERLORD_MFA_REQUIRED_FOR_ADMINS || "").toLowerCase() === "true" ||
+        fileConfig.security?.mfaRequiredForAdmins ||
+        DEFAULT_CONFIG.security.mfaRequiredForAdmins,
+      mfaRequiredForNonAdmins:
+        String(process.env.OVERLORD_MFA_REQUIRED_FOR_NON_ADMINS || "").toLowerCase() === "true" ||
+        fileConfig.security?.mfaRequiredForNonAdmins ||
+        DEFAULT_CONFIG.security.mfaRequiredForNonAdmins,
     },
     enrollment: {
       requireApproval:
@@ -675,6 +687,8 @@ export async function updateSecurityConfig(
   next.passwordRequireLowercase = Boolean(next.passwordRequireLowercase);
   next.passwordRequireNumber = Boolean(next.passwordRequireNumber);
   next.passwordRequireSymbol = Boolean(next.passwordRequireSymbol);
+  next.mfaRequiredForAdmins = Boolean(next.mfaRequiredForAdmins);
+  next.mfaRequiredForNonAdmins = Boolean(next.mfaRequiredForNonAdmins);
 
   configCache = {
     ...current,

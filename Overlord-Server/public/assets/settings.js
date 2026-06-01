@@ -19,6 +19,19 @@ const currentPasswordInput = document.getElementById("current-password");
 const newPasswordInput = document.getElementById("new-password");
 const confirmPasswordInput = document.getElementById("confirm-password");
 const passwordPolicyHint = document.getElementById("password-policy-hint");
+const mfaStatusText = document.getElementById("mfa-status-text");
+const mfaStartBtn = document.getElementById("mfa-start-btn");
+const mfaSetupPanel = document.getElementById("mfa-setup-panel");
+const mfaQrCode = document.getElementById("mfa-qr-code");
+const mfaSecretText = document.getElementById("mfa-secret-text");
+const mfaEnableCodeInput = document.getElementById("mfa-enable-code");
+const mfaEnableBtn = document.getElementById("mfa-enable-btn");
+const mfaOtpauthLink = document.getElementById("mfa-otpauth-link");
+const mfaDisablePanel = document.getElementById("mfa-disable-panel");
+const mfaDisablePasswordInput = document.getElementById("mfa-disable-password");
+const mfaDisableCodeInput = document.getElementById("mfa-disable-code");
+const mfaDisableBtn = document.getElementById("mfa-disable-btn");
+const mfaMessage = document.getElementById("mfa-message");
 
 const prefsForm = document.getElementById("prefs-form");
 const prefNotificationsInput = document.getElementById("pref-notifications");
@@ -45,6 +58,8 @@ const securityRequireUppercaseInput = document.getElementById("security-require-
 const securityRequireLowercaseInput = document.getElementById("security-require-lowercase");
 const securityRequireNumberInput = document.getElementById("security-require-number");
 const securityRequireSymbolInput = document.getElementById("security-require-symbol");
+const securityMfaAdminsInput = document.getElementById("security-mfa-admins");
+const securityMfaNonAdminsInput = document.getElementById("security-mfa-non-admins");
 
 const tlsForm = document.getElementById("tls-form");
 const tlsPermissionNote = document.getElementById("tls-permission-note");
@@ -184,6 +199,8 @@ function setSecurityFormDisabled(disabled) {
     securityRequireLowercaseInput,
     securityRequireNumberInput,
     securityRequireSymbolInput,
+    securityMfaAdminsInput,
+    securityMfaNonAdminsInput,
     securitySaveBtn,
   ];
 
@@ -231,6 +248,8 @@ function applySecurityForm() {
   securityRequireLowercaseInput.checked = Boolean(securityConfig.passwordRequireLowercase);
   securityRequireNumberInput.checked = Boolean(securityConfig.passwordRequireNumber);
   securityRequireSymbolInput.checked = Boolean(securityConfig.passwordRequireSymbol);
+  if (securityMfaAdminsInput) securityMfaAdminsInput.checked = Boolean(securityConfig.mfaRequiredForAdmins);
+  if (securityMfaNonAdminsInput) securityMfaNonAdminsInput.checked = Boolean(securityConfig.mfaRequiredForNonAdmins);
   updatePasswordPolicyUi();
 }
 
@@ -246,6 +265,8 @@ async function loadSecurityPolicy() {
       passwordRequireLowercase: false,
       passwordRequireNumber: false,
       passwordRequireSymbol: false,
+      mfaRequiredForAdmins: false,
+      mfaRequiredForNonAdmins: false,
     };
     updatePasswordPolicyUi();
     return;
@@ -393,6 +414,107 @@ async function updatePassword(event) {
   showMessage("Password updated successfully.");
 }
 
+function showMfaMessage(text, type = "ok") {
+  if (!mfaMessage) return;
+  mfaMessage.textContent = text;
+  mfaMessage.className = `text-sm rounded-lg px-3 py-2 border ${
+    type === "error"
+      ? "border-rose-800 bg-rose-900/20 text-rose-200"
+      : "border-emerald-800 bg-emerald-900/20 text-emerald-200"
+  }`;
+  mfaMessage.classList.remove("hidden");
+  setTimeout(() => mfaMessage.classList.add("hidden"), 5000);
+}
+
+async function loadMfaStatus() {
+  if (!mfaStatusText) return;
+  try {
+    const res = await fetch("/api/mfa/status", { credentials: "include" });
+    if (!res.ok) {
+      mfaStatusText.textContent = "Failed to load MFA status.";
+      return;
+    }
+    const data = await res.json();
+    const requiredText = data.required ? " Required by policy." : "";
+    mfaStatusText.textContent = data.enabled
+      ? `MFA is enabled.${requiredText}`
+      : `MFA is not enabled.${requiredText}`;
+    if (mfaStartBtn) mfaStartBtn.classList.toggle("hidden", !!data.enabled);
+    if (mfaDisablePanel) mfaDisablePanel.classList.toggle("hidden", !data.enabled);
+    if (mfaDisableBtn) mfaDisableBtn.disabled = !!data.required;
+    if (mfaDisablePanel) {
+      mfaDisablePanel.classList.toggle("opacity-60", !!data.required);
+    }
+  } catch {
+    mfaStatusText.textContent = "Failed to load MFA status.";
+  }
+}
+
+async function startMfaSetup() {
+  try {
+    const res = await fetch("/api/mfa/setup", { method: "POST", credentials: "include" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      showMfaMessage(data.error || "Failed to start MFA setup.", "error");
+      return;
+    }
+    if (mfaQrCode) mfaQrCode.innerHTML = data.qrSvg || "";
+    if (mfaSecretText) mfaSecretText.textContent = data.secret || "";
+    if (mfaOtpauthLink) mfaOtpauthLink.href = data.otpauthUrl || "#";
+    if (mfaSetupPanel) mfaSetupPanel.classList.remove("hidden");
+    if (mfaEnableCodeInput) mfaEnableCodeInput.focus();
+  } catch {
+    showMfaMessage("Network error while starting MFA setup.", "error");
+  }
+}
+
+async function enableMfa() {
+  const code = String(mfaEnableCodeInput?.value || "").trim();
+  try {
+    const res = await fetch("/api/mfa/enable", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ code }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      showMfaMessage(data.error || "Failed to enable MFA.", "error");
+      return;
+    }
+    if (mfaSetupPanel) mfaSetupPanel.classList.add("hidden");
+    if (mfaEnableCodeInput) mfaEnableCodeInput.value = "";
+    showMfaMessage("MFA enabled.");
+    await loadMfaStatus();
+  } catch {
+    showMfaMessage("Network error while enabling MFA.", "error");
+  }
+}
+
+async function disableMfa() {
+  const currentPassword = String(mfaDisablePasswordInput?.value || "");
+  const code = String(mfaDisableCodeInput?.value || "").trim();
+  try {
+    const res = await fetch("/api/mfa/disable", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ currentPassword, code }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      showMfaMessage(data.error || "Failed to disable MFA.", "error");
+      return;
+    }
+    if (mfaDisablePasswordInput) mfaDisablePasswordInput.value = "";
+    if (mfaDisableCodeInput) mfaDisableCodeInput.value = "";
+    showMfaMessage("MFA disabled.");
+    await loadMfaStatus();
+  } catch {
+    showMfaMessage("Network error while disabling MFA.", "error");
+  }
+}
+
 function savePrefs(event) {
   event.preventDefault();
 
@@ -452,6 +574,8 @@ async function saveSecurityPolicy(event) {
     passwordRequireLowercase: securityRequireLowercaseInput.checked,
     passwordRequireNumber: securityRequireNumberInput.checked,
     passwordRequireSymbol: securityRequireSymbolInput.checked,
+    mfaRequiredForAdmins: !!securityMfaAdminsInput?.checked,
+    mfaRequiredForNonAdmins: !!securityMfaNonAdminsInput?.checked,
   };
 
   const res = await fetch("/api/settings/security", {
@@ -1837,6 +1961,7 @@ async function init() {
     await loadCurrentUser();
     applyPermissionVisibility();
     loadPrefs();
+    await loadMfaStatus();
 
     if (userHas("clients:build")) {
       if (buildsShowAllWrap && !isAdmin(currentUser?.role)) {
@@ -1863,6 +1988,9 @@ async function init() {
     }
 
     passwordForm.addEventListener("submit", updatePassword);
+    if (mfaStartBtn) mfaStartBtn.addEventListener("click", startMfaSetup);
+    if (mfaEnableBtn) mfaEnableBtn.addEventListener("click", enableMfa);
+    if (mfaDisableBtn) mfaDisableBtn.addEventListener("click", disableMfa);
     prefsForm.addEventListener("submit", savePrefs);
 
     const sidebarBtn = document.getElementById("pref-nav-sidebar");
