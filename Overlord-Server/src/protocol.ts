@@ -29,8 +29,16 @@ export type Hello = {
   monitors: number;
   monitorInfo?: { width: number; height: number }[];
   country?: string;
+  hwid?: string;
+  inMemory?: boolean;
+  cpu?: string;
+  gpu?: string;
+  ram?: string;
   batteryPercent?: number;
   batteryCharging?: boolean;
+  isAdmin?: boolean;
+  elevation?: string;
+  permissions?: Record<string, boolean>;
   publicKey?: string;
   signature?: string;
   publicIP?: string;

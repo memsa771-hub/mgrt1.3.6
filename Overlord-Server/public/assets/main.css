@@ -2580,6 +2580,28 @@ tbody tr:hover {
 .cv-pill-system { background: rgba(239, 68, 68, 0.12); color: #fca5a5; border-color: rgba(239, 68, 68, 0.3); }
 .cv-pill-ti { background: rgba(168, 85, 247, 0.12); color: #d8b4fe; border-color: rgba(168, 85, 247, 0.3); }
 .cv-pill-muted { background: rgba(245, 158, 11, 0.12); color: #fcd34d; border-color: rgba(245, 158, 11, 0.3); }
+.cv-pill-macperm.is-ok { background: rgba(16, 185, 129, 0.12); color: #86efac; border-color: rgba(16, 185, 129, 0.3); }
+.cv-pill-macperm.is-warn { background: rgba(245, 158, 11, 0.12); color: #fcd34d; border-color: rgba(245, 158, 11, 0.3); }
+
+.cv-perm-list {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.cv-perm-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 22px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.cv-perm-chip.is-ok { background: rgba(16, 185, 129, 0.1); color: #86efac; border-color: rgba(16, 185, 129, 0.25); }
+.cv-perm-chip.is-missing { background: rgba(244, 63, 94, 0.1); color: #fda4af; border-color: rgba(244, 63, 94, 0.25); }
 
 .cv-group {
   display: inline-flex;
@@ -3347,6 +3369,16 @@ tbody tr:hover {
   white-space: nowrap;
 }
 .cv-card-hw-bit i { color: var(--cv-text-dim); font-size: 10px; }
+
+.cv-card-perms {
+  margin-top: 6px;
+  padding: 6px 8px;
+  background: var(--cv-surface2);
+  border-radius: 6px;
+}
+.cv-card-perms .cv-field {
+  gap: 5px;
+}
 
 .cv-cpu-badge {
   display: inline-flex;

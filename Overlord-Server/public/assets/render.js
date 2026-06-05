@@ -200,6 +200,46 @@ function batteryHtml(client, { compact = false } = {}) {
   </span>`;
 }
 
+function isMacClient(client) {
+  const os = String(client?.os || "").toLowerCase();
+  return os.includes("mac") || os.includes("darwin");
+}
+
+const MAC_PERMISSION_LABELS = [
+  ["accessibility", "Accessibility"],
+  ["screenRecording", "Screen Recording"],
+  ["fullDiskAccess", "Full Disk Access"],
+];
+
+function macPermissionState(client) {
+  if (!isMacClient(client) || !client.permissions || typeof client.permissions !== "object") return null;
+  const items = MAC_PERMISSION_LABELS
+    .filter(([key]) => typeof client.permissions[key] === "boolean")
+    .map(([key, label]) => ({ key, label, granted: client.permissions[key] === true }));
+  if (!items.length) return null;
+  const missing = items.filter((item) => !item.granted);
+  return { items, missing };
+}
+
+function macPermissionBadgeHtml(client) {
+  const state = macPermissionState(client);
+  if (!state) return "";
+  const title = state.items.map((item) => `${item.label}: ${item.granted ? "granted" : "missing"}`).join(" · ");
+  const ok = state.missing.length === 0;
+  return `<span class="cv-mini-pill cv-pill-macperm ${ok ? "is-ok" : "is-warn"}" title="${escapeHtml(title)}"><i class="fa-solid ${ok ? "fa-key" : "fa-triangle-exclamation"}"></i></span>`;
+}
+
+function macPermissionDetailHtml(client) {
+  const state = macPermissionState(client);
+  if (!state) return "";
+  const chips = state.items.map((item) => `
+    <span class="cv-perm-chip ${item.granted ? "is-ok" : "is-missing"}">
+      <i class="fa-solid ${item.granted ? "fa-check" : "fa-xmark"}"></i>${escapeHtml(item.label)}
+    </span>
+  `).join("");
+  return `<div class="cv-field cv-field-wide"><span class="cv-field-label">macOS Permissions</span><span class="cv-field-value cv-perm-list">${chips}</span></div>`;
+}
+
 function shortOsLabel(osRaw = "") {
   const badge = osBadge(osRaw || "");
   if (badge?.label && badge.label !== "Linux" && badge.label !== "Windows") return badge.label;
@@ -536,7 +576,7 @@ export function createRenderer({
   }
 
   function cardDigest(c) {
-    return `${currentDisplayDigest}|${currentLayout}|${c.id}|${!!c.online}|${c.lastSeen}|${c.pingMs}|${c.host}|${c.user}|${c.os}|${c.arch}|${c.version}|${c.monitors}|${c.country}|${c.nickname}|${c.customTag}|${c.customTagNote}|${!!c.bookmarked}|${!!c.isAdmin}|${c.elevation}|${c.cpu}|${c.gpu}|${c.ram}|${c.batteryPercent}|${c.batteryCharging}|${c.hwid}|${c.disconnectReason}|${c.disconnectDetail}|${c.groupId}|${c.groupName}|${c.groupColor}|${!!c.notificationsMuted}`;
+    return `${currentDisplayDigest}|${currentLayout}|${c.id}|${!!c.online}|${c.lastSeen}|${c.pingMs}|${c.host}|${c.user}|${c.os}|${c.arch}|${c.version}|${c.monitors}|${c.country}|${c.nickname}|${c.customTag}|${c.customTagNote}|${!!c.bookmarked}|${!!c.isAdmin}|${c.elevation}|${JSON.stringify(c.permissions || {})}|${c.cpu}|${c.gpu}|${c.ram}|${c.batteryPercent}|${c.batteryCharging}|${c.hwid}|${c.disconnectReason}|${c.disconnectDetail}|${c.groupId}|${c.groupName}|${c.groupColor}|${!!c.notificationsMuted}`;
   }
 
   function cardThumbDigest(c) {
@@ -795,6 +835,7 @@ export function createRenderer({
           ${client.isAdmin ? `<span class="cv-mini-pill cv-pill-admin" title="Admin"><i class="fa-solid fa-shield-halved"></i></span>` : ""}
           ${client.elevation === "system" ? `<span class="cv-mini-pill cv-pill-system" title="SYSTEM"><i class="fa-solid fa-gear"></i></span>` : ""}
           ${client.elevation === "trustedinstaller" ? `<span class="cv-mini-pill cv-pill-ti" title="TrustedInstaller"><i class="fa-solid fa-lock"></i></span>` : ""}
+          ${macPermissionBadgeHtml(client)}
           ${client.notificationsMuted ? `<span class="cv-mini-pill cv-pill-muted" title="Notifications muted"><i class="fa-solid fa-bell-slash"></i></span>` : ""}
         </div>
         ${showField("user") ? `<div class="cv-user-line"><i class="fa-solid fa-user"></i> ${escapeHtml(userLine)}</div>` : ""}
@@ -823,6 +864,7 @@ export function createRenderer({
           ${showHardware ? `<div class="cv-field"><span class="cv-field-label">CPU</span><span class="cv-field-value">${cpuHtml}</span></div>` : ""}
           ${showHardware ? `<div class="cv-field"><span class="cv-field-label">RAM</span><span class="cv-field-value">${escapeHtml(client.ram || "—")}</span></div>` : ""}
           ${batteryIndicator ? `<div class="cv-field"><span class="cv-field-label">Battery</span><span class="cv-field-value">${batteryIndicator}</span></div>` : ""}
+          ${macPermissionDetailHtml(client)}
           ${showHardware && client.gpu ? `<div class="cv-field cv-field-wide"><span class="cv-field-label">GPU</span><span class="cv-field-value">${escapeHtml(client.gpu)}</span></div>` : ""}
           ${showField("version") && !verLatest && client.version ? `<div class="cv-field"><span class="cv-field-label">Version</span><span class="cv-field-value cv-warn">v${escapeHtml(client.version)} (outdated)</span></div>` : ""}
         </div>
@@ -872,6 +914,7 @@ export function createRenderer({
               ${client.isAdmin ? `<span class="cv-mini-pill cv-pill-admin" title="Admin"><i class="fa-solid fa-shield-halved"></i></span>` : ""}
               ${client.elevation === "system" ? `<span class="cv-mini-pill cv-pill-system" title="SYSTEM"><i class="fa-solid fa-gear"></i></span>` : ""}
               ${client.elevation === "trustedinstaller" ? `<span class="cv-mini-pill cv-pill-ti" title="TI"><i class="fa-solid fa-lock"></i></span>` : ""}
+              ${macPermissionBadgeHtml(client)}
               ${client.notificationsMuted ? `<span class="cv-mini-pill cv-pill-muted" title="Notifications muted"><i class="fa-solid fa-bell-slash"></i></span>` : ""}
             </span>
             ${userMeta ? `<span class="cv-user-line cv-mono">${userMeta}</span>` : ""}
@@ -919,6 +962,7 @@ export function createRenderer({
     const showHardware = showField("hardware");
     const cpuHtml = showHardware && client.cpu ? cpuBadgeHtml(client.cpu) : "";
     const batteryIndicator = showField("battery") ? batteryHtml(client, { compact: true }) : "";
+    const macPermDetail = macPermissionDetailHtml(client);
 
     const metaParts = [
       showField("system") ? `<span class="cv-card-meta-bit cv-tone-${os.tone}"><i class="fa ${os.icon}"></i> ${escapeHtml(shortOsLabel(client.os))}</span>` : "",
@@ -931,6 +975,7 @@ export function createRenderer({
       client.isAdmin ? `<span class="cv-mini-pill cv-pill-admin" title="Admin"><i class="fa-solid fa-shield-halved"></i></span>` : "",
       client.elevation === "system" ? `<span class="cv-mini-pill cv-pill-system" title="SYSTEM"><i class="fa-solid fa-gear"></i></span>` : "",
       client.elevation === "trustedinstaller" ? `<span class="cv-mini-pill cv-pill-ti" title="TrustedInstaller"><i class="fa-solid fa-lock"></i></span>` : "",
+      macPermissionBadgeHtml(client),
       client.notificationsMuted ? `<span class="cv-mini-pill cv-pill-muted" title="Notifications muted"><i class="fa-solid fa-bell-slash"></i></span>` : "",
     ].join("");
 
@@ -975,6 +1020,7 @@ export function createRenderer({
           ${showHardware && client.ram ? `<span class="cv-card-hw-bit"><i class="fa-solid fa-memory"></i> ${escapeHtml(client.ram)}</span>` : ""}
           ${batteryIndicator}
         </div>` : ""}
+        ${macPermDetail ? `<div class="cv-card-perms">${macPermDetail}</div>` : ""}
         <div class="cv-card-actions">
           ${isViewer ? "" : `<button class="command-btn cv-btn-primary cv-btn-flex" data-id="${escapeHtml(client.id)}"><i class="fa-solid fa-terminal"></i><span>Commands</span></button>`}
           <button class="cv-icon-btn cv-ping-btn" title="Ping" ${client.online ? "" : "disabled"}><i class="fa-solid fa-satellite-dish"></i></button>
