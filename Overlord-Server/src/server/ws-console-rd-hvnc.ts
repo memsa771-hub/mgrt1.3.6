@@ -168,6 +168,7 @@ export const rdStreamingState = new Map<string, {
   codec: string;
   duplication: boolean;
   maxHeight: number;
+  maxFps: number;
   lastFps: number;
 }>();
 const rdInputPending = new Map<string, { clientId: string; sentAt: number; kind: string }>();
@@ -179,6 +180,15 @@ function pruneRdInputPending(now = Date.now()) {
       rdInputPending.delete(id);
     }
   }
+}
+
+function defaultRdStreamingState() {
+  return { isStreaming: false, display: 0, quality: 90, codec: "", duplication: false, maxHeight: 0, maxFps: 120, lastFps: 0 };
+}
+
+function clampDesktopFps(value: unknown): number {
+  const fps = Math.floor(Number(value) || 120);
+  return Math.max(1, Math.min(240, fps));
 }
 
 function recordRdInput(commandId: string, clientId: string, kind: string) {
@@ -325,7 +335,7 @@ export function handleRemoteDesktopViewerMessage(ws: ServerWebSocket<SocketData>
     return;
   }
 
-  const state = rdStreamingState.get(clientId) || { isStreaming: false, display: 0, quality: 90, codec: "", duplication: false, maxHeight: 0, lastFps: 0 };
+  const state = rdStreamingState.get(clientId) || defaultRdStreamingState();
 
   logger.debug(`[rd] inbound viewer msg type=${payload.type} client=${clientId}`);
   switch (payload.type) {
@@ -366,6 +376,7 @@ export function handleRemoteDesktopViewerMessage(ws: ServerWebSocket<SocketData>
             whepPath: `/api/webrtc/${streamPath}/whep`,
           });
         }
+        sendDesktopCommand(target, "desktop_set_fps", { fps: clampDesktopFps(state.maxFps) });
         sendDesktopCommand(target, "desktop_start", {});
         state.isStreaming = true;
         rdStreamingState.set(clientId, state);
@@ -486,6 +497,16 @@ export function handleRemoteDesktopViewerMessage(ws: ServerWebSocket<SocketData>
         state.maxHeight = newMaxHeight;
         rdStreamingState.set(clientId, state);
         logger.debug(`[rd] set max resolution height=${newMaxHeight}`);
+      }
+      break;
+    }
+    case "desktop_set_fps": {
+      const newMaxFps = clampDesktopFps((payload as any).fps);
+      if (state.maxFps !== newMaxFps) {
+        sendDesktopCommand(target, "desktop_set_fps", { fps: newMaxFps });
+        state.maxFps = newMaxFps;
+        rdStreamingState.set(clientId, state);
+        logger.debug(`[rd] set target fps=${newMaxFps}`);
       }
       break;
     }
@@ -648,7 +669,7 @@ function handleRemoteDesktopFrame(payload: any) {
   const clientId = payload.clientId as string;
   const header = payload.header;
   const bytes = payload.data as Uint8Array;
-  const state = rdStreamingState.get(clientId) || { isStreaming: false, display: 0, quality: 90, codec: "", duplication: false, maxHeight: 0, lastFps: 0 };
+  const state = rdStreamingState.get(clientId) || defaultRdStreamingState();
   if (!state.isStreaming) {
     state.isStreaming = true;
   }
@@ -667,7 +688,7 @@ function handleRemoteDesktopFrame(payload: any) {
 function broadcastRemoteDesktopFrame(clientId: string, bytes: Uint8Array, header?: any): boolean {
   const frameFps = Number(header?.fps) || 0;
   if (frameFps > 0) {
-    const state = rdStreamingState.get(clientId) || { isStreaming: true, display: 0, quality: 90, codec: "", duplication: false, maxHeight: 0, lastFps: 0 };
+    const state = rdStreamingState.get(clientId) || { ...defaultRdStreamingState(), isStreaming: true };
     state.lastFps = frameFps;
     rdStreamingState.set(clientId, state);
   }

@@ -38,6 +38,7 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
   const cursorCtrl = document.getElementById("cursorCtrl");
   const duplicationCtrl = document.getElementById("duplicationCtrl");
   const resolutionSelect = document.getElementById("resolutionSelect");
+  const targetFpsSelect = document.getElementById("targetFpsSelect");
   const smoothingSlider = document.getElementById("smoothingSlider");
   const smoothingValue = document.getElementById("smoothingValue");
   const qualitySlider = document.getElementById("qualitySlider");
@@ -1101,7 +1102,18 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
     const codec = q >= 100 ? "raw" : (prefersH264 ? "h264" : "jpeg");
     console.debug("rd: pushQuality val=", val, "q=", q, "codec=", codec);
     setCodecModeLabel(codec, "requested");
+    if (codec === "h264") {
+      ensureDuplicationForH264();
+    }
     sendCmd("desktop_set_quality", { quality: q, codec });
+  }
+
+  function ensureDuplicationForH264() {
+    if (!duplicationCtrl || duplicationCtrl.disabled) return;
+    const isWindows = clientOs.includes("windows") || clientOs.includes("win");
+    if (!isWindows || duplicationCtrl.checked) return;
+    duplicationCtrl.checked = true;
+    sendCmd("desktop_set_duplication", { enabled: true });
   }
 
   if (codecH264) {
@@ -1109,6 +1121,9 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
       resetH264SessionState();
       prefersH264 = !!codecH264.checked && typeof VideoDecoder === "function";
       localStorage.setItem(codecPrefKey, prefersH264 ? "1" : "0");
+      if (prefersH264) {
+        ensureDuplicationForH264();
+      }
       if (!prefersH264) {
         destroyVideoDecoder();
         h264LowFpsStreak = 0;
@@ -1127,9 +1142,26 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
     }
   }
 
+  function selectedTargetFps() {
+    const fps = Number(targetFpsSelect?.value || 120);
+    return Number.isFinite(fps) ? Math.max(1, Math.min(240, Math.floor(fps))) : 120;
+  }
+
+  function pushTargetFps() {
+    const fps = selectedTargetFps();
+    console.debug("rd: pushTargetFps fps=", fps);
+    sendCmd("desktop_set_fps", { fps });
+  }
+
   if (resolutionSelect) {
     resolutionSelect.addEventListener("change", function () {
       pushResolution();
+    });
+  }
+
+  if (targetFpsSelect) {
+    targetFpsSelect.addEventListener("change", function () {
+      pushTargetFps();
     });
   }
 
@@ -1163,6 +1195,7 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
       display: displaySelect?.value ?? "",
       quality: qualitySlider?.value ?? "",
       resolution: resolutionSelect?.value ?? "",
+      targetFps: targetFpsSelect?.value ?? "",
       prefersH264,
       duplication: !!duplicationCtrl?.checked,
       clientOs,
@@ -1182,6 +1215,10 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
     if (qualitySlider) {
       pushQuality(qualitySlider.value);
     }
+    if (prefersH264) {
+      ensureDuplicationForH264();
+    }
+    pushTargetFps();
     pushResolution();
     desiredStreaming = true;
     lastFrameAt = 0;

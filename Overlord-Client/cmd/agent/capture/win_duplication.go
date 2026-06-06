@@ -53,6 +53,8 @@ const (
 	d3d11UsageStaging           = 3
 	d3d11CpuAccessRead          = 0x20000
 	d3d11MapRead                = 1
+	dxgiFormatR8G8B8A8UNorm     = 28
+	dxgiFormatB8G8R8A8UNorm     = 87
 	dxgiModeRotationUnspecified = 0
 	dxgiModeRotationIdentity    = 1
 	dxgiModeRotationRotate90    = 2
@@ -595,6 +597,9 @@ func (d *idxgiOutputDuplication) ReleaseFrame() uintptr {
 var (
 	desktopDuplicationEnabled atomic.Bool
 	dxgiState                 = &duplicationState{}
+	directH264ActiveOnce      sync.Once
+	directH264ScaleOnce       sync.Once
+	directH264WarnOnce        sync.Once
 )
 
 type duplicationState struct {
@@ -634,6 +639,10 @@ func captureDisplayDXGI(display int) (*image.RGBA, error) {
 	return dxgiState.capture(display)
 }
 
+func captureDisplayDXGIH264(display int, forceKeyframe bool) ([]byte, int, int, time.Duration, time.Duration, bool, error) {
+	return dxgiState.captureH264(display, forceKeyframe)
+}
+
 func (s *duplicationState) reset() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -649,6 +658,7 @@ func (s *duplicationState) closeLocked() {
 		s.staging.Release()
 		s.staging = nil
 	}
+	resetNativeH264D3D11TextureEncoder()
 	if s.context != nil {
 		s.context.Release()
 		s.context = nil
@@ -811,6 +821,108 @@ func (s *duplicationState) capture(display int) (*image.RGBA, error) {
 	s.lastFrameAt = time.Now()
 
 	return img, nil
+}
+
+func (s *duplicationState) captureH264(display int, forceKeyframe bool) ([]byte, int, int, time.Duration, time.Duration, bool, error) {
+	capStart := time.Now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if !useDesktopDuplication() || cursorCaptureEnabled.Load() {
+		return nil, 0, 0, 0, 0, false, errors.New("direct h264 requires DXGI duplication and cursor capture disabled")
+	}
+	if err := s.ensure(display); err != nil {
+		s.lastFail = time.Now()
+		return nil, 0, 0, 0, 0, false, err
+	}
+
+	width := int(s.desc.ModeDesc.Width)
+	height := int(s.desc.ModeDesc.Height)
+	if width <= 0 || height <= 0 || width%2 != 0 || height%2 != 0 {
+		return nil, 0, 0, 0, 0, false, fmt.Errorf("direct h264 requires positive even dimensions, got %dx%d", width, height)
+	}
+	if s.desc.Rotation != dxgiModeRotationIdentity && s.desc.Rotation != dxgiModeRotationUnspecified {
+		return nil, 0, 0, 0, 0, false, fmt.Errorf("direct h264 requires identity rotation, got %d", s.desc.Rotation)
+	}
+	encodeW, encodeH := width, height
+	if scale := effectiveScale(width, height); scale != 1 {
+		encodeW = int(float64(width) * scale)
+		encodeH = int(float64(height) * scale)
+		encodeW -= encodeW % 2
+		encodeH -= encodeH % 2
+		if encodeW <= 0 || encodeH <= 0 {
+			return nil, 0, 0, 0, 0, false, fmt.Errorf("direct h264 computed invalid scaled output %dx%d", encodeW, encodeH)
+		}
+		directH264ScaleOnce.Do(func() {
+			log.Printf("capture: direct DXGI->NVENC h264 using NVENC scale=%.2f input=%dx%d output=%dx%d", scale, width, height, encodeW, encodeH)
+		})
+	}
+
+	var info dxgiOutDuplFrameInfo
+	var resource *iunknown
+	hr := s.dup.AcquireNextFrame(5, &info, &resource)
+	if hr == dxgiErrorWaitTimeout {
+		return nil, encodeW, encodeH, time.Since(capStart), 0, true, nil
+	}
+	if hr == dxgiErrorAccessLost {
+		s.closeLocked()
+		return nil, 0, 0, 0, 0, false, errors.New("dxgi: access lost")
+	}
+	if hr == dxgiErrorDeviceRemoved || hr == dxgiErrorDeviceReset {
+		s.closeLocked()
+		return nil, 0, 0, 0, 0, false, fmt.Errorf("dxgi: device lost 0x%x", hr)
+	}
+	if hr != S_OK {
+		return nil, 0, 0, 0, 0, false, fmt.Errorf("dxgi: acquire frame failed 0x%x", hr)
+	}
+	if resource != nil {
+		defer resource.Release()
+	}
+	if resource == nil {
+		return nil, 0, 0, 0, 0, false, errors.New("dxgi: acquired nil resource")
+	}
+	defer s.dup.ReleaseFrame()
+
+	var tex *d3d11Texture2D
+	hr = resource.QueryInterface(&IID_ID3D11Texture2D, unsafe.Pointer(&tex))
+	if hr != S_OK || tex == nil {
+		return nil, 0, 0, 0, 0, false, fmt.Errorf("dxgi: acquired resource is not ID3D11Texture2D 0x%x", hr)
+	}
+	defer tex.Release()
+
+	var srcDesc d3d11Texture2DDesc
+	tex.GetDesc(&srcDesc)
+	if srcDesc.Width == 0 || srcDesc.Height == 0 {
+		return nil, 0, 0, 0, 0, false, errors.New("dxgi: acquired texture has invalid dimensions")
+	}
+	if int(srcDesc.Width) != width || int(srcDesc.Height) != height {
+		return nil, 0, 0, 0, 0, false, fmt.Errorf("dxgi: texture size %dx%d does not match duplication %dx%d", srcDesc.Width, srcDesc.Height, width, height)
+	}
+	if srcDesc.Format != dxgiFormatB8G8R8A8UNorm && srcDesc.Format != dxgiFormatR8G8B8A8UNorm {
+		directH264WarnOnce.Do(func() {
+			log.Printf("capture: direct DXGI->NVENC h264 unavailable: unsupported DXGI texture format %d; using readback path", srcDesc.Format)
+		})
+		return nil, 0, 0, 0, 0, false, fmt.Errorf("direct h264 unsupported DXGI texture format %d", srcDesc.Format)
+	}
+
+	captureDur := time.Since(capStart)
+	fps := activeH264FPS()
+	encStart := time.Now()
+	out, err := encodeNativeH264D3D11Texture(unsafe.Pointer(s.device), unsafe.Pointer(tex), width, height, encodeW, encodeH, fps, srcDesc.Format, forceKeyframe)
+	encodeDur := time.Since(encStart)
+	if err != nil {
+		directH264WarnOnce.Do(func() {
+			log.Printf("capture: direct DXGI->NVENC h264 failed for %dx%d@%dfps format=%d: %v; using readback path", width, height, fps, srcDesc.Format, err)
+		})
+		return nil, 0, 0, 0, 0, false, err
+	}
+	if len(out) == 0 {
+		return nil, encodeW, encodeH, captureDur, encodeDur, true, nil
+	}
+	directH264ActiveOnce.Do(func() {
+		log.Printf("capture: direct DXGI->NVENC h264 path active input=%dx%d output=%dx%d fps=%d dxgi_format=%d", width, height, encodeW, encodeH, fps, srcDesc.Format)
+	})
+	return out, encodeW, encodeH, captureDur, encodeDur, true, nil
 }
 
 func (s *duplicationState) composeFrame(base *image.RGBA, nativeW, nativeH int) *image.RGBA {

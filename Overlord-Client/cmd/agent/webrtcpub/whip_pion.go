@@ -37,9 +37,32 @@ func drainRTCP(sender *webrtc.RTPSender) {
 		for _, p := range packets {
 			switch p.(type) {
 			case *rtcp.PictureLossIndication, *rtcp.FullIntraRequest:
-				RequestKeyframe()
+				handleRTCPKeyframeFeedback()
 			}
 		}
+	}
+}
+
+const h264SDPFmtpLine = "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=640034"
+
+var rtcpKeyframeLogOnce sync.Once
+
+func handleRTCPKeyframeFeedback() {
+	if !honorRTCPKeyframes() {
+		rtcpKeyframeLogOnce.Do(func() {
+			log.Printf("webrtcpub: ignoring RTCP video keyframe requests by default; set OVERLORD_WEBRTC_RTCP_KEYFRAMES=true to honor them")
+		})
+		return
+	}
+	RequestKeyframe()
+}
+
+func honorRTCPKeyframes() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("OVERLORD_WEBRTC_RTCP_KEYFRAMES"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -86,7 +109,7 @@ func Start(ctx context.Context, kind Kind, opts Options) (*Publisher, error) {
 			RTPCodecCapability: webrtc.RTPCodecCapability{
 				MimeType:    webrtc.MimeTypeH264,
 				ClockRate:   90000,
-				SDPFmtpLine: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f",
+				SDPFmtpLine: h264SDPFmtpLine,
 			},
 			PayloadType: 102,
 		}, webrtc.RTPCodecTypeVideo); err != nil {

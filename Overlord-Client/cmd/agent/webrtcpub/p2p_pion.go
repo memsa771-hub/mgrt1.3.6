@@ -61,7 +61,7 @@ func StartP2POffer(ctx context.Context, kind Kind, sessionID string, offerSDP st
 			RTPCodecCapability: webrtc.RTPCodecCapability{
 				MimeType:    webrtc.MimeTypeH264,
 				ClockRate:   90000,
-				SDPFmtpLine: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f",
+				SDPFmtpLine: h264SDPFmtpLine,
 			},
 			PayloadType: 102,
 		}, webrtc.RTPCodecTypeVideo); err != nil {

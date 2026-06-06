@@ -176,6 +176,22 @@
                     <option value="relayed">WebRTC Relayed</option>
                   </select>
                 </div>
+                <div class="flex items-center gap-2 mb-2">
+                  <label class="text-sm text-slate-300 w-20" for="targetFpsSelect">Max FPS</label>
+                  <select
+                    id="targetFpsSelect"
+                    class="flex-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-sm text-slate-100"
+                    title="Target capture and encoder frame rate"
+                  >
+                    <option value="30">30 fps</option>
+                    <option value="60">60 fps</option>
+                    <option value="90">90 fps</option>
+                    <option value="120" selected>120 fps</option>
+                    <option value="144">144 fps</option>
+                    <option value="165">165 fps</option>
+                    <option value="240">240 fps</option>
+                  </select>
+                </div>
                 <div class="flex items-center justify-between gap-2">
                   <label class="flex items-center gap-2 text-sm text-slate-200" title="Prefer H.264 when available; disable to force JPEG">
                     <input type="checkbox" id="codecH264" checked /> H.264

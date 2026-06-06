@@ -814,6 +814,18 @@ func HandleCommand(ctx context.Context, env *runtime.Env, envelope map[string]in
 		capture.SetMaxResolution(maxH)
 		sendCommandResultSafe(env, cmdID, true, "")
 		return nil
+	case "desktop_set_fps":
+		payload, _ := envelope["payload"].(map[string]interface{})
+		fps := 120
+		if payload != nil {
+			if v, ok := payloadInt(payload, "fps"); ok {
+				fps = v
+			}
+		}
+		fps = SetDesktopTargetFPS(fps)
+		log.Printf("desktop: set target fps=%d", fps)
+		sendCommandResultSafe(env, cmdID, true, "")
+		return nil
 	case "clipboard_sync_start":
 		payload, _ := envelope["payload"].(map[string]interface{})
 		source := "rd"

@@ -46,6 +46,7 @@ func registerVideoWriter(kind Kind, id string, w VideoWriter) {
 	entry.video = w
 	bucket[id] = entry
 	writersMu.Unlock()
+	RequestKeyframe()
 }
 
 func registerAudioWriter(kind Kind, id string, w AudioWriter) {

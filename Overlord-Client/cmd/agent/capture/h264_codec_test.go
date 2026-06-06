@@ -2,6 +2,7 @@ package capture
 
 import (
 	"image"
+	"image/color"
 	"os"
 	"strings"
 	"sync"
@@ -61,6 +62,34 @@ func TestEncodeH264Frame_WhenUnavailableReturnsError(t *testing.T) {
 	}
 	if out != nil {
 		t.Fatalf("expected nil output when h264 is unavailable, got %d bytes", len(out))
+	}
+}
+
+func TestEncodeH264Frame_WhenAvailableProducesBytes(t *testing.T) {
+	if !h264Available() {
+		t.Skip("h264 is unavailable in this build")
+	}
+	t.Cleanup(resetH264Encoder)
+
+	img := image.NewRGBA(image.Rect(0, 0, 64, 64))
+	var got []byte
+	for frame := 0; frame < 8; frame++ {
+		for y := 0; y < 64; y++ {
+			for x := 0; x < 64; x++ {
+				img.SetRGBA(x, y, color.RGBA{R: uint8(x*3 + frame*7), G: uint8(y * 3), B: uint8(80 + frame*11), A: 255})
+			}
+		}
+		out, err := encodeH264Frame(img)
+		if err != nil {
+			t.Fatalf("encodeH264Frame failed: %v", err)
+		}
+		if len(out) > 0 {
+			got = out
+			break
+		}
+	}
+	if len(got) == 0 {
+		t.Fatal("expected h264 encoder to produce bytes")
 	}
 }
 

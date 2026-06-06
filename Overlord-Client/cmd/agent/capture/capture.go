@@ -108,6 +108,20 @@ func CaptureAndSend(ctx context.Context, env *rt.Env) error {
 		time.Sleep(50 * time.Millisecond)
 	}
 
+	if frame, captureDur, encodeDur, used, err := tryBuildDirectH264Frame(display); used {
+		if err != nil {
+			consecutiveCaptureFails.Add(1)
+			log.Printf("capture: direct h264 capture failed: %v (sending black frame, consecutive=%d)", err, consecutiveCaptureFails.Load())
+			return sendBlackFrame(ctx, env)
+		}
+		if len(frame.Data) == 0 {
+			consecutiveCaptureFails.Store(0)
+			return nil
+		}
+		consecutiveCaptureFails.Store(0)
+		return sendCompletedFrame(ctx, env, frame, display, t0, captureDur, encodeDur)
+	}
+
 	img, err := safeCaptureDisplay(display)
 	if err != nil {
 		img, err = safeCaptureDisplay(display)
@@ -220,6 +234,74 @@ func CaptureAndSend(ctx context.Context, env *rt.Env) error {
 	statTotalNs.Add(time.Since(t0).Nanoseconds())
 	statBytes.Add(int64(len(frame.Data)))
 	return err
+}
+
+func sendCompletedFrame(ctx context.Context, env *rt.Env, frame wire.Frame, display int, t0 time.Time, captureDur, encodeDur time.Duration) error {
+	now := time.Now()
+	fps := frameFPS(now)
+	if fps <= 0 {
+		fps = 1
+	}
+	frame.Header.FPS = fps
+	if ctx.Err() != nil {
+		return nil
+	}
+	if frame.Header.Format == "h264" && webrtcpub.IsActive(webrtcpub.KindDesktop) {
+		dur := time.Second / time.Duration(fps)
+		if dur <= 0 {
+			dur = 33 * time.Millisecond
+		}
+		if werr := webrtcpub.WriteH264(webrtcpub.KindDesktop, frame.Data, dur); werr != nil {
+			log.Printf("webrtc: write h264 failed: %v", werr)
+		}
+		statFrames.Add(1)
+		statCapNs.Add(captureDur.Nanoseconds())
+		statEncNs.Add(encodeDur.Nanoseconds())
+		statTotalNs.Add(time.Since(t0).Nanoseconds())
+		statBytes.Add(int64(len(frame.Data)))
+		return nil
+	}
+	if !AcquireFrameSlot() {
+		return nil
+	}
+	sendStart := time.Now()
+	err := wire.WriteMsg(ctx, env.Conn, frame)
+	sendDur := time.Since(sendStart)
+	if shouldLogFrame(now) {
+		total := time.Since(t0)
+		frames := statFrames.Load()
+		capAvg := avgMs(statCapNs.Load(), frames)
+		encAvg := avgMs(statEncNs.Load(), frames)
+		sendAvg := avgMs(statSendNs.Load(), frames)
+		totalAvg := avgMs(statTotalNs.Load(), frames)
+		bytesAvg := avgBytes(statBytes.Load(), frames)
+		detectAvg := avgMs(statDetectNs.Load(), frames)
+		mergeAvg := avgMs(statMergeNs.Load(), frames)
+		blkJpegAvg := avgMs(statBlkJpegNs.Load(), frames)
+		prevCopyAvg := avgMs(statPrevCopyNs.Load(), frames)
+		full := statFullFrames.Load()
+		blocks := statBlockFrames.Load()
+		keep := statKeepaliveFrames.Load()
+		regions := statBlockRegions.Load()
+		fallbacks := statBlockFallbacks.Load()
+		avgRegions := float64(0)
+		if blocks > 0 {
+			avgRegions = float64(regions) / float64(blocks)
+		}
+		log.Printf("capture: stream display=%d fps≈%d format=%s size=%d cap=%s enc=%s send=%s total=%s | avg cap=%.2fms enc=%.2fms send=%.2fms total=%.2fms avgSize=%.0fB frames=%d detect=%.2fms merge=%.2fms blkJpeg=%.2fms prevCopy=%.2fms full=%d blocks=%d keep=%d fallbacks=%d avgRegions=%.2f", display, fps, frame.Header.Format, len(frame.Data), captureDur, encodeDur, sendDur, total, capAvg, encAvg, sendAvg, totalAvg, bytesAvg, frames, detectAvg, mergeAvg, blkJpegAvg, prevCopyAvg, full, blocks, keep, fallbacks, avgRegions)
+		resetStats()
+	}
+	if err != nil {
+		ReleaseFrameSlot()
+		return err
+	}
+	statFrames.Add(1)
+	statCapNs.Add(captureDur.Nanoseconds())
+	statEncNs.Add(encodeDur.Nanoseconds())
+	statSendNs.Add(sendDur.Nanoseconds())
+	statTotalNs.Add(time.Since(t0).Nanoseconds())
+	statBytes.Add(int64(len(frame.Data)))
+	return nil
 }
 
 // captureAllDisplaysAndSend stitches all monitors into a single image and sends
@@ -391,6 +473,8 @@ var (
 	fpsCount       atomic.Int64
 	fpsLatest      atomic.Int64
 	lastFrameLog   atomic.Int64
+	metricsOnce    sync.Once
+	metricsEnabled bool
 	lastKeyframe   atomic.Int64
 	fullNextFrames atomic.Int64
 
@@ -474,12 +558,32 @@ func frameFPS(now time.Time) int {
 }
 
 func shouldLogFrame(now time.Time) bool {
+	if !captureMetricsEnabled() {
+		return false
+	}
 	last := time.Unix(0, lastFrameLog.Load())
 	if now.Sub(last) >= frameLogInterval {
 		lastFrameLog.Store(now.UnixNano())
 		return true
 	}
 	return false
+}
+
+func captureMetricsEnabled() bool {
+	metricsOnce.Do(func() {
+		for _, name := range []string{"OVERLORD_CAPTURE_METRICS", "OVERLORD_DEV_METRICS"} {
+			switch strings.ToLower(strings.TrimSpace(os.Getenv(name))) {
+			case "1", "true", "yes", "on":
+				metricsEnabled = true
+				return
+			}
+		}
+		switch strings.ToLower(strings.TrimSpace(os.Getenv("OVERLORD_MODE"))) {
+		case "dev", "development":
+			metricsEnabled = true
+		}
+	})
+	return metricsEnabled
 }
 
 func requestFullFrames(count int) {

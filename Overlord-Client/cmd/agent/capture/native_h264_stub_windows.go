@@ -1,0 +1,20 @@
+//go:build windows && !cgo
+
+package capture
+
+import "fmt"
+import "unsafe"
+
+func newNativeH264Encoder(width, height, fps int) (h264FrameEncoder, error) {
+	return nil, fmt.Errorf("native NVENC D3D11 requires cgo for %dx%d@%dfps", width, height, fps)
+}
+
+func nativeH264AvailabilityDetail() string {
+	return ""
+}
+
+func encodeNativeH264D3D11Texture(device, texture unsafe.Pointer, inputWidth, inputHeight, encodeWidth, encodeHeight, fps int, dxgiFormat uint32, forceIDR bool) ([]byte, error) {
+	return nil, fmt.Errorf("native NVENC D3D11 texture encode requires cgo for input=%dx%d output=%dx%d@%dfps", inputWidth, inputHeight, encodeWidth, encodeHeight, fps)
+}
+
+func resetNativeH264D3D11TextureEncoder() {}
