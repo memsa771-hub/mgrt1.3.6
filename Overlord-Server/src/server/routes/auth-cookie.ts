@@ -8,6 +8,12 @@ function envFlagDisabled(value: string): boolean {
   return v === "0" || v === "false" || v === "no" || v === "off";
 }
 
+function shouldTrustProxyHeaders(): boolean {
+  const explicit = String(process.env.OVERLORD_TRUST_PROXY_HEADERS || "");
+  if (explicit) return envFlagEnabled(explicit);
+  return false;
+}
+
 export function shouldUseSecureAuthCookie(req: Request): boolean {
   const mode = String(process.env.OVERLORD_AUTH_COOKIE_SECURE || "auto");
   if (envFlagEnabled(mode)) {
@@ -17,16 +23,22 @@ export function shouldUseSecureAuthCookie(req: Request): boolean {
     return false;
   }
 
-  const forwardedProto = req.headers
-    .get("x-forwarded-proto")
-    ?.split(",")[0]
-    ?.trim()
-    ?.toLowerCase();
-  if (forwardedProto === "https") {
+  if (envFlagEnabled(String(process.env.OVERLORD_TLS_OFFLOAD || ""))) {
     return true;
   }
-  if (forwardedProto === "http") {
-    return false;
+
+  if (shouldTrustProxyHeaders()) {
+    const forwardedProto = req.headers
+      .get("x-forwarded-proto")
+      ?.split(",")[0]
+      ?.trim()
+      ?.toLowerCase();
+    if (forwardedProto === "https") {
+      return true;
+    }
+    if (forwardedProto === "http") {
+      return false;
+    }
   }
 
   try {

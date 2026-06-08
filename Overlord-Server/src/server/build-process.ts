@@ -20,6 +20,7 @@ import {
 import { runDonut } from "./donut-manager";
 import { buildLinuxShellcode } from "./linux-shellcode-manager";
 import { runSgn } from "./sgn-manager";
+import { resolveContainedPath } from "./upload-security";
 
 function isClientModuleDir(dir: string): boolean {
   return (
@@ -214,7 +215,7 @@ async function uploadBuildFilesToFileShare(
   for (const file of build.files as any[]) {
     const filename: string = file.filename || file.name;
     if (!filename) continue;
-    const sourcePath = path.join(outDir, filename);
+    const sourcePath = resolveContainedPath(outDir, filename);
     if (!fs.existsSync(sourcePath)) {
       sendToStream({
         type: "output",
@@ -225,9 +226,9 @@ async function uploadBuildFilesToFileShare(
     }
     try {
       const id = uuidv4();
-      const folder = path.join(fileShareRoot, id);
+      const folder = resolveContainedPath(fileShareRoot, id);
       await fs.promises.mkdir(folder, { recursive: true });
-      const targetPath = path.join(folder, filename);
+      const targetPath = resolveContainedPath(folder, filename);
       await fs.promises.copyFile(sourcePath, targetPath);
       const size = fs.statSync(targetPath).size;
 

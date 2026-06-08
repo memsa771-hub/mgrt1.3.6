@@ -1,5 +1,4 @@
 import fs from "fs/promises";
-import path from "path";
 import { v4 as uuidv4 } from "uuid";
 import { authenticateRequest } from "../../auth";
 import { AuditAction, logAudit } from "../../auditLog";
@@ -8,6 +7,7 @@ import { metrics } from "../../metrics";
 import { encodeMessage } from "../../protocol";
 import { requirePermission } from "../../rbac";
 import { createUploadPull } from "../file-transfer-state";
+import { resolveContainedPath, sanitizeUploadFilename } from "../upload-security";
 
 type RequestIpProvider = {
   requestIP: (req: Request) => { address?: string } | null | undefined;
@@ -100,12 +100,12 @@ export async function handleWinRERoutes(
       return new Response("Missing file", { status: 400 });
     }
 
-    const filename = path.basename(file.name || "upload.exe");
+    const filename = sanitizeUploadFilename(file.name, "upload.exe");
     const id = uuidv4();
     await fs.mkdir(deps.WINRE_ROOT, { recursive: true });
-    const folder = path.join(deps.WINRE_ROOT, id);
+    const folder = resolveContainedPath(deps.WINRE_ROOT, id);
     await fs.mkdir(folder, { recursive: true });
-    const targetPath = path.join(folder, filename);
+    const targetPath = resolveContainedPath(folder, filename);
     const bytes = new Uint8Array(await file.arrayBuffer());
     await fs.writeFile(targetPath, bytes);
 

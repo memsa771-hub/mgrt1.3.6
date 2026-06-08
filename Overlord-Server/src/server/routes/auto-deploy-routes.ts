@@ -13,6 +13,7 @@ import { requirePermission } from "../../rbac";
 import { AUTO_DEPLOY_TRIGGERS, ALLOWED_OS_FILTERS } from "../validation-constants";
 import { v4 as uuidv4 } from "uuid";
 import type { DeployOs } from "../deploy-utils";
+import { resolveContainedPath, sanitizeUploadFilename } from "../upload-security";
 
 type AutoDeployRouteDeps = {
   DEPLOY_ROOT: string;
@@ -89,12 +90,12 @@ export async function handleAutoDeployRoutes(
       return Response.json({ error: "Invalid trigger" }, { status: 400 });
     }
 
-    const filename = path.basename(file.name || "upload.bin");
+    const filename = sanitizeUploadFilename(file.name, "upload.bin");
     const id = uuidv4();
     await fs.mkdir(deps.DEPLOY_ROOT, { recursive: true });
-    const folder = path.join(deps.DEPLOY_ROOT, "auto", id);
+    const folder = resolveContainedPath(deps.DEPLOY_ROOT, "auto", id);
     await fs.mkdir(folder, { recursive: true });
-    const targetPath = path.join(folder, filename);
+    const targetPath = resolveContainedPath(folder, filename);
     const bytes = new Uint8Array(await file.arrayBuffer());
     await fs.writeFile(targetPath, bytes);
 

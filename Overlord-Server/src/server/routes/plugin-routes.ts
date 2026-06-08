@@ -1262,7 +1262,13 @@ export async function handlePluginRoutes(
       return new Response("Forbidden: Viewers cannot access interactive features", { status: 403 });
     }
 
-    const [, pluginId, assetPath] = pluginAssetMatch;
+    const [, rawPluginId, assetPath] = pluginAssetMatch;
+    let pluginId = "";
+    try {
+      pluginId = deps.sanitizePluginId(rawPluginId);
+    } catch {
+      return new Response("Invalid plugin id", { status: 400 });
+    }
     try {
       requirePluginAccess(user, pluginId);
     } catch (error) {

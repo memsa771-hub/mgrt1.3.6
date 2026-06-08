@@ -1,6 +1,5 @@
 import { createHash } from "crypto";
 import fs from "fs/promises";
-import path from "path";
 import { v4 as uuidv4 } from "uuid";
 import { authenticateRequest } from "../../auth";
 import { AuditAction, logAudit } from "../../auditLog";
@@ -9,6 +8,8 @@ import { metrics } from "../../metrics";
 import { encodeMessage } from "../../protocol";
 import { requirePermission } from "../../rbac";
 import { createUploadPull } from "../file-transfer-state";
+import { fetchPublicUrlBytes, validatePublicHttpUrl } from "../url-security";
+import { resolveContainedPath, sanitizeUploadFilename } from "../upload-security";
 
 type RequestIpProvider = {
   requestIP: (req: Request) => { address?: string } | null | undefined;
@@ -64,12 +65,12 @@ export async function handleDeployRoutes(
       return new Response("Missing file", { status: 400 });
     }
 
-    const filename = path.basename(file.name || "upload.bin");
+    const filename = sanitizeUploadFilename(file.name, "upload.bin");
     const id = uuidv4();
     await fs.mkdir(deps.DEPLOY_ROOT, { recursive: true });
-    const folder = path.join(deps.DEPLOY_ROOT, id);
+    const folder = resolveContainedPath(deps.DEPLOY_ROOT, id);
     await fs.mkdir(folder, { recursive: true });
-    const targetPath = path.join(folder, filename);
+    const targetPath = resolveContainedPath(folder, filename);
     const bytes = new Uint8Array(await file.arrayBuffer());
     await fs.writeFile(targetPath, bytes);
 
@@ -112,47 +113,27 @@ export async function handleDeployRoutes(
 
     let parsed: URL;
     try {
-      parsed = new URL(fileUrl);
-    } catch {
-      return new Response("Invalid URL", { status: 400 });
-    }
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      return new Response("Only http and https URLs are allowed", { status: 400 });
+      parsed = await validatePublicHttpUrl(fileUrl);
+    } catch (err: any) {
+      return new Response(err?.message || "Invalid URL", { status: 400 });
     }
 
-    const hostname = parsed.hostname.toLowerCase();
-    const BLOCKED_HOSTS = ["localhost", "metadata.google.internal", "169.254.169.254"];
-    if (
-      BLOCKED_HOSTS.includes(hostname) ||
-      hostname.endsWith(".internal") ||
-      hostname.startsWith("127.") ||
-      hostname === "[::1]" ||
-      /^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)/.test(hostname) ||
-      hostname.startsWith("169.254.") ||
-      hostname.startsWith("0.")
-    ) {
-      return new Response("URLs pointing to private/internal addresses are not allowed", { status: 400 });
-    }
-
-    const rawFilename = path.basename(parsed.pathname) || "download.bin";
-    const filename = rawFilename.replace(/[^a-zA-Z0-9._\-]/g, "_").substring(0, 128) || "download.bin";
+    const rawFilename = parsed.pathname.split("/").pop() || "download.bin";
+    const filename = sanitizeUploadFilename(rawFilename, "download.bin");
 
     let fileBytes: Uint8Array;
     try {
-      const fetchRes = await fetch(fileUrl);
-      if (!fetchRes.ok) {
-        return new Response(`Remote fetch failed: ${fetchRes.status}`, { status: 502 });
-      }
-      fileBytes = new Uint8Array(await fetchRes.arrayBuffer());
+      const fetched = await fetchPublicUrlBytes(parsed.toString());
+      fileBytes = fetched.bytes;
     } catch (err: any) {
       return new Response(`Failed to fetch URL: ${err?.message || "network error"}`, { status: 502 });
     }
 
     const id = uuidv4();
     await fs.mkdir(deps.DEPLOY_ROOT, { recursive: true });
-    const folder = path.join(deps.DEPLOY_ROOT, id);
+    const folder = resolveContainedPath(deps.DEPLOY_ROOT, id);
     await fs.mkdir(folder, { recursive: true });
-    const targetPath = path.join(folder, filename);
+    const targetPath = resolveContainedPath(folder, filename);
     await fs.writeFile(targetPath, fileBytes);
 
     const os = deps.detectUploadOs(filename, fileBytes);

@@ -13,6 +13,7 @@ import {
   incrementSharedFileDownloadCount,
 } from "../../db";
 import { getUserById, canUploadFiles } from "../../users";
+import { resolveContainedPath, sanitizeUploadFilename } from "../upload-security";
 
 type FileShareRouteDeps = {
   FILE_SHARE_ROOT: string;
@@ -191,13 +192,13 @@ export async function handleFileShareRoutes(
       return Response.json({ error: "Missing file" }, { status: 400 });
     }
 
-    const filename = path.basename(file.name || "upload.bin");
+    const filename = sanitizeUploadFilename(file.name, "upload.bin");
     const id = uuidv4();
 
     await fs.mkdir(deps.FILE_SHARE_ROOT, { recursive: true });
-    const folder = path.join(deps.FILE_SHARE_ROOT, id);
+    const folder = resolveContainedPath(deps.FILE_SHARE_ROOT, id);
     await fs.mkdir(folder, { recursive: true });
-    const targetPath = path.join(folder, filename);
+    const targetPath = resolveContainedPath(folder, filename);
 
     const bytes = new Uint8Array(await file.arrayBuffer());
     await fs.writeFile(targetPath, bytes);
