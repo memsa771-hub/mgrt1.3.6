@@ -6,6 +6,9 @@ on:
     paths:
       - "Overlord-Desktop/**"
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: windows-latest
@@ -18,34 +21,55 @@ jobs:
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
 
+      - name: Get Version
+        id: version
+        run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          if ($version -notmatch '^\d+\.\d+\.\d+$') {
+            throw "package.json version must be strict X.Y.Z SemVer for release tags; got '$version'"
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+        shell: pwsh
+
+      - name: Ensure Release Tag Does Not Exist
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          tag="Overlord-Desktop-v${VERSION}"
+          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
+            echo "Release tag already exists: ${tag}" >&2
+            exit 1
+          fi
+          if gh release view "${tag}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "Release already exists: ${tag}" >&2
+            exit 1
+          fi
+        shell: bash
+
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: latest
+          bun-version: 1.3.14
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
       - name: Cache Rust build
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
         with:
           workspaces: Overlord-Desktop/src-tauri -> target
 
       - name: Install Dependencies
-        run: bun install
+        run: bun install --frozen-lockfile
 
       - name: Vendor frontend assets
         run: bun run vendor
-
-      - name: Get Version
-        run: |
-          $version = (Get-Content package.json | ConvertFrom-Json).version
-          echo "VERSION=$version" >> $env:GITHUB_ENV
-        shell: pwsh
 
       - name: Build Windows Installer (Tauri NSIS)
         run: bun run build:win
@@ -59,42 +83,34 @@ jobs:
           echo "INSTALLER_NAME=$($nsis.Name)" >> $env:GITHUB_ENV
 
       - name: Upload Build Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: overlord-desktop-${{ env.VERSION }}
+          name: overlord-desktop-${{ steps.version.outputs.version }}
           path: ${{ env.INSTALLER }}
 
-      - name: Delete Existing Release and Tag
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          # Look up the release by tag_name via the list endpoint (works even if the git tag is gone)
-          RELEASE_ID=$(gh api /repos/${{ github.repository }}/releases \
-            --jq '.[] | select(.tag_name == "Overlord-Desktop-v${{ env.VERSION }}") | .id' \
-            2>/dev/null || true)
-          if [ -n "$RELEASE_ID" ]; then
-            gh api --method DELETE /repos/${{ github.repository }}/releases/$RELEASE_ID || true
-          fi
-          # Delete the git tag ref if it somehow still exists
-          gh api --method DELETE /repos/${{ github.repository }}/git/refs/tags/Overlord-Desktop-v${{ env.VERSION }} 2>/dev/null || true
-        shell: bash
-
       - name: Create and Push Tag
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
+          set -euo pipefail
+          tag="Overlord-Desktop-v${VERSION}"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -f Overlord-Desktop-v${{ env.VERSION }}
-          git push origin Overlord-Desktop-v${{ env.VERSION }} --force
+          git tag "${tag}"
+          git push origin "${tag}"
         shell: bash
 
       - name: Create Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          gh release create Overlord-Desktop-v${{ env.VERSION }} "${{ env.INSTALLER }}" "PLEASE_READ.txt" \
+          set -euo pipefail
+          tag="Overlord-Desktop-v${VERSION}"
+          gh release create "${tag}" "${INSTALLER}" "PLEASE_READ.txt" \
             --verify-tag \
-            -t "Overlord Desktop v${{ env.VERSION }}" \
-            -n "Automated build release for Overlord Desktop v${{ env.VERSION }}" \
+            -t "Overlord Desktop v${VERSION}" \
+            -n "Automated build release for Overlord Desktop v${VERSION}" \
             --draft=false \
             --prerelease=false
         shell: bash
