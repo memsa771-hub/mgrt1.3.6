@@ -1,6 +1,7 @@
 import Database from "bun:sqlite";
 import { resolve } from "path";
 import { ensureDataDir } from "./paths";
+import { metrics } from "./metrics";
 
 const dataDir = ensureDataDir();
 const dbPath = resolve(dataDir, "overlord.db");
@@ -145,6 +146,7 @@ function flushAuditLogs(): void {
   if (auditQueue.length === 0) return;
 
   const logsToWrite = auditQueue.splice(0, auditQueue.length);
+  const startedAt = Date.now();
 
   try {
     const insert = db.prepare(
@@ -168,6 +170,7 @@ function flushAuditLogs(): void {
     });
 
     transaction(logsToWrite);
+    metrics.recordInternalTask("audit-flush", Date.now() - startedAt);
   } catch (error) {
     console.error(
       `[audit] Failed to flush ${logsToWrite.length} audit entries:`,
@@ -178,6 +181,10 @@ function flushAuditLogs(): void {
 
 export function flushAuditLogsSync(): void {
   flushAuditLogs();
+}
+
+export function getAuditQueueStats(): { queued: number } {
+  return { queued: auditQueue.length };
 }
 
 export function getAuditLogs(filters: AuditLogFilters = {}): {

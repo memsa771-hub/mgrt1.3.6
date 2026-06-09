@@ -780,6 +780,67 @@ function updateMetrics(data, debug) {
     }
   }
 
+  const internalTasksList = document.getElementById("internal-tasks");
+  if (internalTasksList) {
+    const tasks = Array.isArray(data.internal?.tasks) ? data.internal.tasks : [];
+    if (tasks.length > 0) {
+      internalTasksList.innerHTML = tasks
+        .map((task) => `
+          <div class="bg-slate-800/50 rounded p-3 min-w-0">
+            <div class="text-xs text-slate-400 mb-2 truncate" title="${escapeHtml(task.task)}">
+              ${escapeHtml(task.task)}
+            </div>
+            <div class="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+              <span class="text-slate-500">p95</span>
+              <span class="font-semibold text-right">${formatMs(task.durationP95 || 0)}</span>
+              <span class="text-slate-500">avg</span>
+              <span class="font-semibold text-right">${formatMs(task.durationAvg || 0)}</span>
+              <span class="text-slate-500">max</span>
+              <span class="font-semibold text-right">${formatMs(task.durationMax || 0)}</span>
+              <span class="text-slate-500">runs/min</span>
+              <span class="font-semibold text-right">${Number(task.countLastMinute || 0).toLocaleString()}</span>
+            </div>
+          </div>
+        `)
+        .join("");
+    } else {
+      internalTasksList.innerHTML =
+        '<div class="text-slate-500 col-span-full text-center py-4">No internal job samples yet</div>';
+    }
+  }
+
+  const retainedStateList = document.getElementById("retained-state");
+  if (retainedStateList) {
+    const retained = data.diagnostics?.retained || {};
+    const entries = Object.entries(retained)
+      .filter(([, value]) => typeof value === "number" || typeof value === "boolean")
+      .sort(([a], [b]) => a.localeCompare(b));
+    if (entries.length > 0) {
+      retainedStateList.innerHTML = entries
+        .map(([key, value]) => {
+          const displayValue = key.toLowerCase().includes("bytes")
+            ? formatBytes(Number(value || 0))
+            : typeof value === "boolean"
+              ? value ? "yes" : "no"
+              : Number(value || 0).toLocaleString();
+          return `
+            <div class="bg-slate-800/50 rounded p-3 min-w-0">
+              <div class="text-xs text-slate-500 mb-1 truncate" title="${escapeHtml(key)}">
+                ${escapeHtml(key)}
+              </div>
+              <div class="text-sm font-semibold truncate" title="${escapeHtml(displayValue)}">
+                ${escapeHtml(displayValue)}
+              </div>
+            </div>
+          `;
+        })
+        .join("");
+    } else {
+      retainedStateList.innerHTML =
+        '<div class="text-slate-500 col-span-full text-center py-4">No retained state counters yet</div>';
+    }
+  }
+
   const commandTypesList = document.getElementById("command-types");
   if (Object.keys(data.commands.byType).length > 0) {
     const topCommands = Object.entries(data.commands.byType)

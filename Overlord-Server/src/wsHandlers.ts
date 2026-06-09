@@ -15,7 +15,6 @@ import {
   notifyThumbnailGenerated,
   requestThumbnailRegen,
 } from "./thumbnails";
-import { upsertClientRow } from "./db";
 import { metrics } from "./metrics";
 import { markClientDbSynced, queueClientDbUpdate, shouldSyncClientToDb } from "./client-db-sync";
 
@@ -124,7 +123,7 @@ export async function handleHello(
   info.lastSeen = Date.now();
   info.online = true;
 
-  upsertClientRow({
+  queueClientDbUpdate({
     id: info.id,
     hwid: info.hwid,
     role: info.role,
@@ -166,7 +165,6 @@ export function handlePing(info: ClientInfo, payload: Ping, ws: any) {
     });
   }
   ws.send(encodeMessage({ type: "pong", ts: payload.ts || Date.now() }));
-  sendPingRequest(info, ws, "client_ping");
 }
 
 export function sendPingRequest(info: ClientInfo, ws: any, reason: string) {

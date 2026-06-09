@@ -36,6 +36,7 @@ async function triggerAgentThumbnail(clientId) {
     const res = await fetch(`/api/clients/${encodeURIComponent(clientId)}/thumbnail`, {
       method: "POST",
       credentials: "include",
+      headers: { "X-Overlord-Thumbnail-Source": "dashboard" },
     });
     if (!res.ok) return null;
     return await res.json().catch(() => null);

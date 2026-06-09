@@ -23,6 +23,7 @@ import {
 } from "../../db";
 import { metrics } from "../../metrics";
 import { encodeMessage } from "../../protocol";
+import { getConfig } from "../../config";
 import { requireClientAccess, requireFeatureAccess, requirePermission } from "../../rbac";
 import {
   canUserAccessClient,
@@ -175,6 +176,12 @@ export async function handleClientRoutes(
     try { requireClientAccess(user, clientId); } catch (error) {
       if (error instanceof Response) return error;
       return new Response("Forbidden", { status: 403 });
+    }
+    if (
+      req.headers.get("x-overlord-thumbnail-source") === "dashboard" &&
+      getConfig().thumbnails.dashboardEnabled === false
+    ) {
+      return Response.json({ ok: false, disabled: true }, { headers: deps.CORS_HEADERS });
     }
     const { requestThumbnailRegen, markThumbnailRequested, getThumbnailVersion, waitForThumbnail, clearThumbnailRequest } = await import("../../thumbnails");
     markThumbnailRequested(clientId);

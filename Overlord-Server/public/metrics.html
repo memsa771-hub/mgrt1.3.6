@@ -258,6 +258,44 @@
           </div>
         </div>
 
+        <!-- Slow Internal Jobs -->
+        <div class="bg-slate-900/70 border border-slate-800 rounded-lg p-4">
+          <div class="flex items-center justify-between gap-3 flex-wrap mb-3">
+            <h3 class="text-lg font-semibold flex items-center gap-2">
+              <i class="fa-solid fa-gears text-cyan-400"></i>
+              Slowest Internal Jobs
+            </h3>
+            <div class="text-xs text-slate-500">Sorted by p95 duration, last minute</div>
+          </div>
+          <div
+            id="internal-tasks"
+            class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3"
+          >
+            <div class="text-slate-500 col-span-full text-center py-4">
+              No internal job samples yet
+            </div>
+          </div>
+        </div>
+
+        <!-- Retained Runtime State -->
+        <div class="bg-slate-900/70 border border-slate-800 rounded-lg p-4">
+          <div class="flex items-center justify-between gap-3 flex-wrap mb-3">
+            <h3 class="text-lg font-semibold flex items-center gap-2">
+              <i class="fa-solid fa-box-archive text-violet-400"></i>
+              Retained Runtime State
+            </h3>
+            <div class="text-xs text-slate-500">Long-lived maps, queues, and caches</div>
+          </div>
+          <div
+            id="retained-state"
+            class="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-3"
+          >
+            <div class="text-slate-500 col-span-full text-center py-4">
+              No retained state counters yet
+            </div>
+          </div>
+        </div>
+
         <!-- Mix Charts -->
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <div class="bg-slate-900/70 border border-slate-800 rounded-lg p-4">

@@ -4,6 +4,8 @@ import { digestData } from "./utils.js";
 const POLL_INTERVAL_MS = 5000;
 const FALLBACK_POLL_MS = 30000;
 const PREF_REFRESH_KEY = "overlord_refresh_interval_seconds";
+const REALTIME_MIN_LOAD_MS = 1500;
+const REALTIME_CHURN_WINDOW_MS = 5000;
 let pollTimer = null;
 let render = () => {};
 let lastClientData = null;
@@ -12,6 +14,12 @@ const PAGE_CACHE_LIMIT = 8;
 let dashboardWs = null;
 let dashboardWsConnected = false;
 let wsReconnectTimer = null;
+let realtimeLoadTimer = null;
+let lastRealtimeLoadAt = 0;
+let lastRealtimeEventAt = 0;
+let realtimeEventCount = 0;
+let realtimeForce = false;
+let realtimeReorder = false;
 const manuallyDisconnecting = new Set();
 
 function stopDashboardRealtime() {
@@ -19,6 +27,8 @@ function stopDashboardRealtime() {
   pollTimer = null;
   clearTimeout(wsReconnectTimer);
   wsReconnectTimer = null;
+  clearTimeout(realtimeLoadTimer);
+  realtimeLoadTimer = null;
   if (dashboardWs) {
     try {
       dashboardWs.onopen = null;
@@ -30,6 +40,38 @@ function stopDashboardRealtime() {
   }
   dashboardWs = null;
   dashboardWsConnected = false;
+}
+
+function noteRealtimeEvent() {
+  const now = Date.now();
+  if (now - lastRealtimeEventAt > REALTIME_CHURN_WINDOW_MS) {
+    realtimeEventCount = 0;
+  }
+  lastRealtimeEventAt = now;
+  realtimeEventCount += 1;
+}
+
+function isRealtimeChurnActive() {
+  return Date.now() - lastRealtimeEventAt < REALTIME_CHURN_WINDOW_MS && realtimeEventCount > 5;
+}
+
+function scheduleRealtimeLoad(options = {}) {
+  noteRealtimeEvent();
+  realtimeForce = realtimeForce || !!options.force;
+  realtimeReorder = realtimeReorder || options.reorder !== false;
+  if (realtimeLoadTimer) return;
+
+  const elapsed = Date.now() - lastRealtimeLoadAt;
+  const delay = Math.max(0, REALTIME_MIN_LOAD_MS - elapsed);
+  realtimeLoadTimer = setTimeout(() => {
+    realtimeLoadTimer = null;
+    lastRealtimeLoadAt = Date.now();
+    const force = realtimeForce;
+    const reorder = realtimeReorder;
+    realtimeForce = false;
+    realtimeReorder = false;
+    loadWithOptions({ force, reorder });
+  }, delay);
 }
 
 function bindDashboardPagehideCleanup() {
@@ -101,6 +143,7 @@ async function prefetchClientPage(page) {
 }
 
 function prefetchAdjacentPages(data) {
+  if (isRealtimeChurnActive()) return;
   const totalPages = Math.max(1, Math.ceil((Number(data.total) || 0) / (Number(data.pageSize) || state.pageSize || 1)));
   const current = Number(data.page) || state.page;
   if (current < totalPages) prefetchClientPage(current + 1);
@@ -219,16 +262,16 @@ function connectDashboardWs() {
     try {
       const msg = typeof event.data === "string" ? JSON.parse(event.data) : null;
       if (msg && msg.type === "clients_changed") {
-        loadWithOptions({ force: false, reorder: true });
+        scheduleRealtimeLoad({ force: false, reorder: true });
         return;
       }
       if (msg && msg.type === "client_event") {
         if (msg.event === "client_offline" && manuallyDisconnecting.has(msg.clientId)) {
           manuallyDisconnecting.delete(msg.clientId);
-          loadWithOptions({ force: true });
+          scheduleRealtimeLoad({ force: true, reorder: true });
         } else {
-          moveClientCardImmediately(msg);
-          loadWithOptions({ force: false, reorder: true });
+          if (!isRealtimeChurnActive()) moveClientCardImmediately(msg);
+          scheduleRealtimeLoad({ force: false, reorder: true });
         }
       }
     } catch {}

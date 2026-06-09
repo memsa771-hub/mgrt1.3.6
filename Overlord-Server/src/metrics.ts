@@ -66,6 +66,14 @@ export interface MetricsSnapshot {
     avg: number;
     max: number;
     p95: number;
+    sampleMs: number;
+    samples: number;
+  };
+  internal: {
+    tasks: InternalTaskStats[];
+  };
+  diagnostics?: {
+    retained: Record<string, number | boolean>;
   };
 }
 
@@ -79,6 +87,17 @@ export interface HttpRouteStats {
   latencyMax: number;
   lastDuration: number;
   lastStatus: number;
+}
+
+export interface InternalTaskStats {
+  task: string;
+  countLastMinute: number;
+  durationAvg: number;
+  durationP95: number;
+  durationP99: number;
+  durationMax: number;
+  lastDuration: number;
+  lastAt: number;
 }
 
 export interface MetricsHistory {
@@ -104,6 +123,11 @@ interface TimedHttpSample {
   ts: number;
   duration: number;
   statusCode: number;
+}
+
+interface TimedInternalTaskSample {
+  ts: number;
+  duration: number;
 }
 
 class MetricsCollector {
@@ -141,7 +165,17 @@ class MetricsCollector {
   private ignoredHttpMetricRoutes: Set<string> = new Set(["GET /api/metrics"]);
 
   private eventLoopDelays: number[] = [];
-  private maxEventLoopHistory: number = 300;
+  private eventLoopSampleMs: number = Math.max(
+    20,
+    Number(process.env.OVERLORD_EVENT_LOOP_SAMPLE_MS || 100),
+  );
+  private maxEventLoopHistory: number = Math.max(
+    10,
+    Math.ceil((Number(process.env.OVERLORD_EVENT_LOOP_HISTORY_SECONDS || 60) * 1000) / this.eventLoopSampleMs),
+  );
+
+  private internalTaskSamples: Map<string, TimedInternalTaskSample[]> = new Map();
+  private maxInternalTaskSamples: number = 300;
 
   private pruneTimestampWindow(list: number[], minTs: number): void {
     let removeCount = 0;
@@ -257,7 +291,7 @@ class MetricsCollector {
   }
 
   private trackEventLoopDelay() {
-    const intervalMs = 1000;
+    const intervalMs = this.eventLoopSampleMs;
     let last = Date.now();
     setInterval(() => {
       const now = Date.now();
@@ -282,7 +316,7 @@ class MetricsCollector {
       : 0;
   }
 
-  private pruneHttpSamples(list: TimedHttpSample[], minTs: number): void {
+  private pruneTimedSamples(list: Array<{ ts: number }>, minTs: number): void {
     let removeCount = 0;
     while (removeCount < list.length && list[removeCount].ts <= minTs) {
       removeCount += 1;
@@ -303,7 +337,7 @@ class MetricsCollector {
   private getTopHttpRoutes(minTs: number): HttpRouteStats[] {
     const routes: HttpRouteStats[] = [];
     for (const [route, samples] of this.httpRouteSamples.entries()) {
-      this.pruneHttpSamples(samples, minTs);
+      this.pruneTimedSamples(samples, minTs);
       if (samples.length === 0) {
         this.httpRouteSamples.delete(route);
         continue;
@@ -335,6 +369,40 @@ class MetricsCollector {
       .slice(0, 8);
   }
 
+  private getTopInternalTasks(minTs: number): InternalTaskStats[] {
+    const tasks: InternalTaskStats[] = [];
+    for (const [task, samples] of this.internalTaskSamples.entries()) {
+      this.pruneTimedSamples(samples, minTs);
+      if (samples.length === 0) {
+        this.internalTaskSamples.delete(task);
+        continue;
+      }
+
+      const durations = samples
+        .map((sample) => sample.duration)
+        .sort((a, b) => a - b);
+      const last = samples[samples.length - 1];
+      tasks.push({
+        task,
+        countLastMinute: samples.length,
+        durationAvg: this.average(durations),
+        durationP95: this.percentile(durations, 0.95),
+        durationP99: this.percentile(durations, 0.99),
+        durationMax: durations[durations.length - 1] ?? 0,
+        lastDuration: last?.duration ?? 0,
+        lastAt: last?.ts ?? 0,
+      });
+    }
+
+    return tasks
+      .sort((a, b) => {
+        if (b.durationP95 !== a.durationP95) return b.durationP95 - a.durationP95;
+        if (b.durationAvg !== a.durationAvg) return b.durationAvg - a.durationAvg;
+        return b.countLastMinute - a.countLastMinute;
+      })
+      .slice(0, 8);
+  }
+
   recordHttpRequest(durationMs: number, statusCode: number, route = "unknown") {
     if (this.ignoredHttpMetricRoutes.has(route)) return;
 
@@ -360,6 +428,18 @@ class MetricsCollector {
       }
       this.httpRouteSamples.set(route, routeSamples);
     }
+  }
+
+  recordInternalTask(task: string, durationMs: number) {
+    if (!task || !Number.isFinite(durationMs)) return;
+    const now = Date.now();
+    const sample = { ts: now, duration: Math.max(0, durationMs) };
+    const samples = this.internalTaskSamples.get(task) || [];
+    samples.push(sample);
+    if (samples.length > this.maxInternalTaskSamples) {
+      samples.splice(0, samples.length - this.maxInternalTaskSamples);
+    }
+    this.internalTaskSamples.set(task, samples);
   }
 
   async withHttpMetrics<T extends Response>(
@@ -424,7 +504,7 @@ class MetricsCollector {
     this.pruneTimestampWindow(this.commandTimestamps, oneHourAgo);
     this.pruneTimestampWindow(this.httpTimestamps, oneMinuteAgo);
     this.pruneTimestampWindow(this.httpErrorTimestamps, oneMinuteAgo);
-    this.pruneHttpSamples(this.httpSamples, oneMinuteAgo);
+    this.pruneTimedSamples(this.httpSamples, oneMinuteAgo);
 
     const commandsLastMinute = this.countRecent(this.commandTimestamps, oneMinuteAgo);
     const commandsLastHour = this.commandTimestamps.length;
@@ -444,6 +524,7 @@ class MetricsCollector {
     const httpLatencyP95 = this.percentile(httpLatencySamples, 0.95);
     const httpLatencyP99 = this.percentile(httpLatencySamples, 0.99);
     const httpRoutes = this.getTopHttpRoutes(oneMinuteAgo);
+    const internalTasks = this.getTopInternalTasks(oneMinuteAgo);
 
     const eventLoopSamples = [...this.eventLoopDelays].sort((a, b) => a - b);
     const eventLoopAvg = eventLoopSamples.length
@@ -532,6 +613,11 @@ class MetricsCollector {
         avg: eventLoopAvg,
         max: eventLoopMax,
         p95: eventLoopP95,
+        sampleMs: this.eventLoopSampleMs,
+        samples: eventLoopSamples.length,
+      },
+      internal: {
+        tasks: internalTasks,
       },
     };
   }
@@ -558,6 +644,7 @@ class MetricsCollector {
     this.httpSamples = [];
     this.httpRouteSamples.clear();
     this.eventLoopDelays = [];
+    this.internalTaskSamples.clear();
   }
 }
 

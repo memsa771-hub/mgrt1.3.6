@@ -215,12 +215,13 @@ export type ClientDbRow = Omit<Partial<ClientInfo>, "online"> & {
   online?: number;
 };
 
-export function upsertClientRow(
-  partial: ClientDbRow,
-) {
-  const now = partial.lastSeen ?? Date.now();
-  db.run(
-    `INSERT INTO clients (id, hwid, role, ip, host, os, arch, version, user, nickname, custom_tag, custom_tag_note, monitors, country, last_seen, online, ping_ms, build_tag, built_by_user_id, enrollment_status, public_key, key_fingerprint, cpu, gpu, ram, battery_percent, battery_charging, is_admin, elevation, permissions)
+export type OfflineStateUpdate = {
+  id: string;
+  disconnectReason?: string;
+  disconnectDetail?: string;
+};
+
+const UPSERT_CLIENT_ROW_SQL = `INSERT INTO clients (id, hwid, role, ip, host, os, arch, version, user, nickname, custom_tag, custom_tag_note, monitors, country, last_seen, online, ping_ms, build_tag, built_by_user_id, enrollment_status, public_key, key_fingerprint, cpu, gpu, ram, battery_percent, battery_charging, is_admin, elevation, permissions)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 0), ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        hwid=COALESCE(excluded.hwid, clients.hwid),
@@ -252,7 +253,13 @@ export function upsertClientRow(
        is_admin=COALESCE(excluded.is_admin, clients.is_admin),
        elevation=COALESCE(excluded.elevation, clients.elevation),
        permissions=COALESCE(excluded.permissions, clients.permissions)
-    `,
+    `;
+
+const upsertClientRowStmt = db.prepare(UPSERT_CLIENT_ROW_SQL);
+
+function upsertClientRowInternal(partial: ClientDbRow): void {
+  const now = partial.lastSeen ?? Date.now();
+  upsertClientRowStmt.run(
     partial.id,
     partial.hwid ?? partial.id,
     partial.role ?? null,
@@ -292,6 +299,24 @@ export function upsertClientRow(
       partial.id,
     );
   }
+}
+
+const upsertClientRowsTx = db.transaction((rows: ClientDbRow[]) => {
+  for (const row of rows) {
+    upsertClientRowInternal(row);
+  }
+});
+
+export function upsertClientRow(
+  partial: ClientDbRow,
+) {
+  upsertClientRowInternal(partial);
+  invalidateClientMetricsSummaryCache();
+}
+
+export function upsertClientRows(rows: ClientDbRow[]): void {
+  if (rows.length === 0) return;
+  upsertClientRowsTx(rows);
   invalidateClientMetricsSummaryCache();
 }
 
@@ -311,6 +336,28 @@ export function setOnlineState(id: string, online: boolean, disconnectReason?: s
       id,
     );
   }
+  invalidateClientMetricsSummaryCache();
+}
+
+const setOfflineStateStmt = db.prepare(
+  `UPDATE clients SET online=0, last_seen=?, disconnect_reason=?, disconnect_detail=? WHERE id=?`,
+);
+
+const setOfflineStatesTx = db.transaction((updates: OfflineStateUpdate[]) => {
+  const now = Date.now();
+  for (const update of updates) {
+    setOfflineStateStmt.run(
+      now,
+      update.disconnectReason ?? null,
+      update.disconnectDetail ?? null,
+      update.id,
+    );
+  }
+});
+
+export function setOfflineStates(updates: OfflineStateUpdate[]): void {
+  if (updates.length === 0) return;
+  setOfflineStatesTx(updates);
   invalidateClientMetricsSummaryCache();
 }
 

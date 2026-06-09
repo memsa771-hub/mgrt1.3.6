@@ -1,9 +1,15 @@
-import { upsertClientRow, type ClientDbRow } from "./db";
+import { upsertClientRows, type ClientDbRow } from "./db";
+import { metrics } from "./metrics";
 
 export const CLIENT_DB_SYNC_INTERVAL_MS = Number(process.env.OVERLORD_CLIENT_DB_SYNC_MS || 5000);
+export const CLIENT_DB_SYNC_BATCH_SIZE = Math.max(
+  1,
+  Number(process.env.OVERLORD_CLIENT_DB_SYNC_BATCH_SIZE || 100),
+);
 
 const lastClientDbSync = new Map<string, number>();
 const pendingClientDbUpdates = new Map<string, ClientDbRow>();
+let flushSoonTimer: ReturnType<typeof setTimeout> | null = null;
 
 export function queueClientDbUpdate(partial: ClientDbRow): void {
   const existing = pendingClientDbUpdates.get(partial.id);
@@ -23,10 +29,27 @@ export function queueClientDbUpdate(partial: ClientDbRow): void {
 
 export function flushQueuedClientDbUpdates(): void {
   if (pendingClientDbUpdates.size === 0) return;
-  for (const update of pendingClientDbUpdates.values()) {
-    upsertClientRow(update);
+
+  const startedAt = Date.now();
+  let processed = 0;
+  const updates: ClientDbRow[] = [];
+  for (const [clientId, update] of pendingClientDbUpdates.entries()) {
+    updates.push(update);
+    pendingClientDbUpdates.delete(clientId);
+    processed += 1;
+    if (processed >= CLIENT_DB_SYNC_BATCH_SIZE) {
+      break;
+    }
   }
-  pendingClientDbUpdates.clear();
+  upsertClientRows(updates);
+
+  if (pendingClientDbUpdates.size > 0 && !flushSoonTimer) {
+    flushSoonTimer = setTimeout(() => {
+      flushSoonTimer = null;
+      flushQueuedClientDbUpdates();
+    }, 25);
+  }
+  metrics.recordInternalTask("client-db-flush", Date.now() - startedAt);
 }
 
 setInterval(flushQueuedClientDbUpdates, CLIENT_DB_SYNC_INTERVAL_MS);
@@ -45,4 +68,16 @@ export function markClientDbSynced(clientId: string, now: number): void {
 export function clearClientSyncState(clientId: string): void {
   lastClientDbSync.delete(clientId);
   pendingClientDbUpdates.delete(clientId);
+}
+
+export function getClientDbSyncStats(): {
+  trackedClients: number;
+  pendingUpdates: number;
+  flushScheduled: boolean;
+} {
+  return {
+    trackedClients: lastClientDbSync.size,
+    pendingUpdates: pendingClientDbUpdates.size,
+    flushScheduled: flushSoonTimer !== null,
+  };
 }

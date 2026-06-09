@@ -488,12 +488,37 @@ export function getDashboardSessionCount(): number {
 }
 
 let dashboardBroadcastTimer: ReturnType<typeof setTimeout> | null = null;
-const DASHBOARD_DEBOUNCE_MS = 150;
+let dashboardClientEventTimer: ReturnType<typeof setTimeout> | null = null;
+let dashboardClientEventCount = 0;
+const DASHBOARD_DEBOUNCE_MS = Math.max(
+  150,
+  Number(process.env.OVERLORD_DASHBOARD_DEBOUNCE_MS || 1000),
+);
+const DASHBOARD_CLIENT_EVENT_FLUSH_MS = Math.max(
+  250,
+  Number(process.env.OVERLORD_DASHBOARD_EVENT_FLUSH_MS || 1000),
+);
+const DASHBOARD_CLIENT_EVENT_INLINE_LIMIT = Math.max(
+  0,
+  Number(process.env.OVERLORD_DASHBOARD_EVENT_INLINE_LIMIT || 20),
+);
 
 export function notifyDashboardClientEvent(
   event: "client_online" | "client_offline" | "client_purgatory",
   info: { id: string; host?: string; user?: string; os?: string; ip?: string; country?: string },
 ): void {
+  dashboardClientEventCount += 1;
+  if (dashboardClientEventCount > DASHBOARD_CLIENT_EVENT_INLINE_LIMIT) {
+    if (!dashboardClientEventTimer) {
+      dashboardClientEventTimer = setTimeout(() => {
+        dashboardClientEventTimer = null;
+        dashboardClientEventCount = 0;
+        notifyDashboardViewers();
+      }, DASHBOARD_CLIENT_EVENT_FLUSH_MS);
+    }
+    return;
+  }
+
   const msg = JSON.stringify({
     type: "client_event",
     event,
@@ -511,6 +536,13 @@ export function notifyDashboardClientEvent(
     } catch {
       dashboardSessions.delete(id);
     }
+  }
+
+  if (!dashboardClientEventTimer) {
+    dashboardClientEventTimer = setTimeout(() => {
+      dashboardClientEventTimer = null;
+      dashboardClientEventCount = 0;
+    }, DASHBOARD_CLIENT_EVENT_FLUSH_MS);
   }
 }
 

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { decodeMessage } from "./protocol";
 import { metrics } from "./metrics";
-import { handlePong, sendPingRequest } from "./wsHandlers";
+import { handlePing, handlePong, sendPingRequest } from "./wsHandlers";
 
 type MockWs = { sent: Uint8Array[]; send: (msg: Uint8Array) => void };
 
@@ -28,6 +28,29 @@ describe("wsHandlers ping/pong", () => {
 
     sendPingRequest(info, ws, "test");
     expect(ws.sent.length).toBe(1);
+  });
+
+  test("handlePing responds with pong without starting another server ping", () => {
+    const ws: MockWs = {
+      sent: [],
+      send(msg) {
+        this.sent.push(msg);
+      },
+    };
+    const info = {
+      id: "client-ping",
+      role: "client",
+      ws,
+      lastSeen: Date.now(),
+    } as any;
+
+    handlePing(info, { type: "ping", ts: 9876 } as any, ws);
+
+    expect(ws.sent.length).toBe(1);
+    const payload = decodeMessage(ws.sent[0]) as any;
+    expect(payload.type).toBe("pong");
+    expect(payload.ts).toBe(9876);
+    expect(info.lastPingNonce).toBeUndefined();
   });
 
   test("handlePong clears nonce and records ping", () => {

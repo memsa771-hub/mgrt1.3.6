@@ -1,4 +1,5 @@
 import { logger } from "../logger";
+import { metrics } from "../metrics";
 import { sendPingRequest } from "../wsHandlers";
 import type { ClientInfo } from "../types";
 import { pruneStaleClients } from "./stale-prune";
@@ -13,8 +14,30 @@ type StartMaintenanceParams = {
   disconnectTimeoutMs: number;
 };
 
+function nonNegativeIntEnv(name: string, fallback: number): number {
+  const raw = String(process.env[name] || "").trim();
+  if (!raw) return fallback;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0) return fallback;
+  return Math.floor(parsed);
+}
+
+const HEARTBEAT_SWEEP_TICK_MS = Math.max(
+  250,
+  nonNegativeIntEnv("OVERLORD_HEARTBEAT_SWEEP_TICK_MS", 1_000),
+);
+const HEARTBEAT_BATCH_SIZE = nonNegativeIntEnv("OVERLORD_HEARTBEAT_BATCH_SIZE", 0);
+
+export function getHeartbeatBatchSize(totalClients: number, heartbeatIntervalMs: number): number {
+  if (totalClients <= 0) return 0;
+  if (HEARTBEAT_BATCH_SIZE > 0) return Math.min(totalClients, HEARTBEAT_BATCH_SIZE);
+  const ticksPerSweep = Math.max(1, Math.floor(heartbeatIntervalMs / HEARTBEAT_SWEEP_TICK_MS));
+  return Math.max(1, Math.ceil(totalClients / ticksPerSweep));
+}
+
 export function startMaintenanceLoops(params: StartMaintenanceParams): void {
   setInterval(() => {
+    const startedAt = Date.now();
     pruneStaleClients({
       clients: params.getClients(),
       staleMs: params.staleMs,
@@ -22,6 +45,7 @@ export function startMaintenanceLoops(params: StartMaintenanceParams): void {
       setOnlineState: params.setOnlineState,
       deleteClient: params.deleteClient,
     });
+    metrics.recordInternalTask("stale-prune", Date.now() - startedAt);
   }, 5000);
 
   const livenessTimeoutMs = Math.max(
@@ -29,10 +53,23 @@ export function startMaintenanceLoops(params: StartMaintenanceParams): void {
     60_000,
   );
 
+  let heartbeatCursor = 0;
   setInterval(() => {
+    const startedAt = Date.now();
     const now = Date.now();
-    for (const [id, info] of params.getClients().entries()) {
-      if (info.role !== "client") continue;
+    const clients = Array.from(params.getClients().entries()).filter(
+      ([, info]) => info.role === "client",
+    );
+    if (clients.length === 0) {
+      heartbeatCursor = 0;
+      metrics.recordInternalTask("heartbeat-sweep", Date.now() - startedAt);
+      return;
+    }
+    if (heartbeatCursor >= clients.length) heartbeatCursor = 0;
+
+    const batchSize = getHeartbeatBatchSize(clients.length, params.heartbeatIntervalMs);
+    for (let i = 0; i < batchSize; i++) {
+      const [id, info] = clients[(heartbeatCursor + i) % clients.length];
       const lastActivity = info.lastSeen || 0;
       if (lastActivity && now - lastActivity > livenessTimeoutMs) {
         logger.warn(
@@ -51,5 +88,7 @@ export function startMaintenanceLoops(params: StartMaintenanceParams): void {
         logger.debug(`[ping] heartbeat failed for ${id}`, err);
       }
     }
-  }, params.heartbeatIntervalMs);
+    heartbeatCursor = (heartbeatCursor + batchSize) % clients.length;
+    metrics.recordInternalTask("heartbeat-sweep", Date.now() - startedAt);
+  }, HEARTBEAT_SWEEP_TICK_MS);
 }

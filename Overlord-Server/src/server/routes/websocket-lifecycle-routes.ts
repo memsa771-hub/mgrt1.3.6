@@ -9,7 +9,7 @@ async function getGeoip() {
 }
 import { logAudit, AuditAction } from "../../auditLog";
 import * as clientManager from "../../clientManager";
-import { clientExists, setOnlineState, upsertClientRow, getClientEnrollmentStatus, setClientEnrollmentStatus, lookupClientByPublicKey, getClientPublicKeyById, getBuildByTag, computeClientSuspiciousFlags } from "../../db";
+import { clientExists, setOnlineState, setOfflineStates, upsertClientRow, getClientEnrollmentStatus, setClientEnrollmentStatus, lookupClientByPublicKey, getClientPublicKeyById, getBuildByTag, computeClientSuspiciousFlags, type OfflineStateUpdate } from "../../db";
 import { getConfig } from "../../config";
 import { logger } from "../../logger";
 import { metrics } from "../../metrics";
@@ -18,6 +18,7 @@ import * as sessionManager from "../../sessions/sessionManager";
 import type { SocketData } from "../../sessions/types";
 import type { ClientInfo } from "../../types";
 import { clearClientSyncState, handleFrame, handleHello, handlePing, handlePong } from "../../wsHandlers";
+import { queueClientDbUpdate } from "../../client-db-sync";
 import { getMaxPayloadLimit, getMessageByteLength, isAllowedClientMessageType } from "../../wsValidation";
 import { stopAllProxiesForClient } from "../socks5-proxy-manager";
 import { verifyBuildToken, isBuildBanned } from "../build-signing";
@@ -42,17 +43,94 @@ type ClientLifecyclePayload = {
 };
 
 type PendingOffline = {
-  timer: ReturnType<typeof setTimeout>;
+  dueAt: number;
+  payload: ClientLifecyclePayload;
+  disconnectReason: string | undefined;
+  disconnectDetail: string | undefined;
+  deps: WsLifecycleDeps;
 };
 
 const pendingOffline = new Map<string, PendingOffline>();
+let pendingOfflineFlushTimer: ReturnType<typeof setTimeout> | null = null;
+const OFFLINE_BATCH_SIZE = Math.max(
+  1,
+  Number(process.env.OVERLORD_OFFLINE_BATCH_SIZE || 250),
+);
+const OFFLINE_BATCH_DELAY_MS = Math.max(
+  1,
+  Number(process.env.OVERLORD_OFFLINE_BATCH_DELAY_MS || 25),
+);
 
 function cancelPendingOffline(clientId: string): boolean {
   const pending = pendingOffline.get(clientId);
   if (!pending) return false;
-  clearTimeout(pending.timer);
   pendingOffline.delete(clientId);
   return true;
+}
+
+function applyPendingOffline(
+  clientId: string,
+  pending: PendingOffline,
+  offlineUpdates: OfflineStateUpdate[],
+): void {
+  if (clientManager.hasClient(clientId)) return;
+  pending.deps.notifyDashboardClientEvent("client_offline", pending.payload);
+  pending.deps.broadcastClientEvent("client_offline", pending.payload);
+  pending.deps.notifyRemoteDesktopStatus(clientId, "offline", "Client disconnected");
+  offlineUpdates.push({
+    id: clientId,
+    disconnectReason: pending.disconnectReason,
+    disconnectDetail: pending.disconnectDetail,
+  });
+  pending.deps.notifyDashboard();
+}
+
+function schedulePendingOfflineFlush(delayMs: number): void {
+  if (pendingOfflineFlushTimer) return;
+  pendingOfflineFlushTimer = setTimeout(() => {
+    pendingOfflineFlushTimer = null;
+    flushPendingOffline();
+  }, delayMs);
+}
+
+function flushPendingOffline(): void {
+  if (pendingOffline.size === 0) return;
+
+  const startedAt = Date.now();
+  const now = Date.now();
+  let processed = 0;
+  let nextDueAt = Number.POSITIVE_INFINITY;
+  const offlineUpdates: OfflineStateUpdate[] = [];
+
+  for (const [clientId, pending] of pendingOffline) {
+    if (pending.dueAt > now) {
+      if (pending.dueAt < nextDueAt) nextDueAt = pending.dueAt;
+      continue;
+    }
+
+    pendingOffline.delete(clientId);
+    applyPendingOffline(clientId, pending, offlineUpdates);
+    processed += 1;
+
+    if (processed >= OFFLINE_BATCH_SIZE) {
+      break;
+    }
+  }
+
+  if (offlineUpdates.length > 0) {
+    const dbStartedAt = Date.now();
+    setOfflineStates(offlineUpdates);
+    metrics.recordInternalTask("offline-db-flush", Date.now() - dbStartedAt);
+  }
+  metrics.recordInternalTask("offline-flush", Date.now() - startedAt);
+  if (pendingOffline.size === 0) return;
+  if (processed >= OFFLINE_BATCH_SIZE) {
+    schedulePendingOfflineFlush(OFFLINE_BATCH_DELAY_MS);
+    return;
+  }
+  if (Number.isFinite(nextDueAt)) {
+    schedulePendingOfflineFlush(Math.max(1, nextDueAt - Date.now()));
+  }
 }
 
 function schedulePendingOffline(
@@ -65,24 +143,25 @@ function schedulePendingOffline(
   cancelPendingOffline(clientId);
 
   if (OFFLINE_GRACE_MS <= 0) {
-    deps.notifyDashboardClientEvent("client_offline", payload);
-    deps.broadcastClientEvent("client_offline", payload);
-    setOnlineState(clientId, false, disconnectReason, disconnectDetail);
-    deps.notifyRemoteDesktopStatus(clientId, "offline", "Client disconnected");
-    deps.notifyDashboard();
+    pendingOffline.set(clientId, {
+      dueAt: Date.now(),
+      payload,
+      disconnectReason,
+      disconnectDetail,
+      deps,
+    });
+    schedulePendingOfflineFlush(1);
     return;
   }
 
-  const timer = setTimeout(() => {
-    pendingOffline.delete(clientId);
-    deps.notifyDashboardClientEvent("client_offline", payload);
-    deps.broadcastClientEvent("client_offline", payload);
-    setOnlineState(clientId, false, disconnectReason, disconnectDetail);
-    deps.notifyRemoteDesktopStatus(clientId, "offline", "Client disconnected");
-    deps.notifyDashboard();
-  }, OFFLINE_GRACE_MS);
-
-  pendingOffline.set(clientId, { timer });
+  pendingOffline.set(clientId, {
+    dueAt: Date.now() + OFFLINE_GRACE_MS,
+    payload,
+    disconnectReason,
+    disconnectDetail,
+    deps,
+  });
+  schedulePendingOfflineFlush(OFFLINE_GRACE_MS);
 }
 
 type PendingScript = {
@@ -263,8 +342,6 @@ export function handleWebSocketOpen(ws: ServerWebSocket<SocketData>, deps: WsLif
     } catch {}
   }, ENROLLMENT_TIMEOUT_MS);
   enrollmentTimeouts.set(id, timeout);
-
-  logger.info(`[open] ${id} role=${role} — purgatory challenge sent`);
 }
 
 export async function handleWebSocketMessage(
@@ -560,7 +637,7 @@ export async function handleWebSocketMessage(
         };
         clientManager.addClient(resolvedId, infoObj);
 
-        upsertClientRow({
+        queueClientDbUpdate({
           id: resolvedId,
           publicKey,
           keyFingerprint,
@@ -644,7 +721,6 @@ export async function handleWebSocketMessage(
         break;
       case "pong":
         handlePong(client, payload);
-        deps.notifyDashboard();
         break;
       case "frame":
         if ((payload as any)?.header?.fps === 0) {
@@ -963,7 +1039,6 @@ export function handleWebSocketClose(
 
   const currentClient = clientManager.getClient(clientId);
   if (currentClient && currentClient.ws !== ws) {
-    logger.info(`[close] ${clientId} code=${code} (superseded socket, skipping cleanup)`);
     return;
   }
 
@@ -994,7 +1069,6 @@ export function handleWebSocketClose(
   deps.hvncStreamingState.delete(clientId);
   deps.webcamStreamingState.delete(clientId);
   stopRemoteDesktopRecording(clientId, "client disconnected");
-  logger.info(`[close] ${clientId} code=${code} reason=${reason} disconnect_reason=${storedDisconnectReason || "unknown"}`);
 
   if (role === "client" && currentClient) {
     schedulePendingOffline(

@@ -1,6 +1,10 @@
 import { logger } from "../logger";
 import { timingSafeEqual } from "crypto";
 
+let warnedDisableAuthIgnored = false;
+let loggedAuthDisabledByEnv = false;
+let loggedAuthDisabledNoToken = false;
+
 function safeCompare(a: string, b: string): boolean {
   const bufA = Buffer.from(a);
   const bufB = Buffer.from(b);
@@ -19,16 +23,25 @@ export function isAuthorizedAgentRequest(
   if (disableAuth) {
     const nodeEnv = String(process.env.NODE_ENV || "development").toLowerCase();
     if (nodeEnv === "production") {
-      logger.warn("[auth] OVERLORD_DISABLE_AGENT_AUTH is ignored in production mode");
+      if (!warnedDisableAuthIgnored) {
+        warnedDisableAuthIgnored = true;
+        logger.warn("[auth] OVERLORD_DISABLE_AGENT_AUTH is ignored in production mode");
+      }
     } else {
-      logger.info("[auth] Agent auth explicitly disabled by OVERLORD_DISABLE_AGENT_AUTH=true (non-production mode)");
+      if (!loggedAuthDisabledByEnv) {
+        loggedAuthDisabledByEnv = true;
+        logger.info("[auth] Agent auth explicitly disabled by OVERLORD_DISABLE_AGENT_AUTH=true (non-production mode)");
+      }
       return true;
     }
   }
 
   const token = agentToken?.trim();
   if (!token) {
-    logger.info("[auth] Agent auth disabled");
+    if (!loggedAuthDisabledNoToken) {
+      loggedAuthDisabledNoToken = true;
+      logger.info("[auth] Agent auth disabled");
+    }
     return true;
   }
 
@@ -37,12 +50,6 @@ export function isAuthorizedAgentRequest(
   const isAuthed =
     (headerToken !== null && safeCompare(headerToken, token)) ||
     (queryToken !== null && safeCompare(queryToken, token));
-
-  if (!isAuthed) {
-    logger.info("[auth] Agent auth failed");
-  } else {
-    logger.info("[auth] Agent authenticated successfully");
-  }
 
   return isAuthed;
 }

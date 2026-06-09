@@ -178,6 +178,14 @@ const DEFAULT_CONFIG: Config = {
   },
 };
 
+function envBoolOverride(name: string): boolean | undefined {
+  const raw = String(process.env[name] || "").trim().toLowerCase();
+  if (!raw) return undefined;
+  if (["1", "true", "yes", "on"].includes(raw)) return true;
+  if (["0", "false", "no", "off"].includes(raw)) return false;
+  return undefined;
+}
+
 type SaveSecrets = {
   auth?: {
     jwtSecret?: string;
@@ -591,13 +599,15 @@ export function loadConfig(): Config {
     },
     thumbnails: {
       dashboardEnabled:
-        fileConfig.thumbnails?.dashboardEnabled !== undefined
+        envBoolOverride("OVERLORD_THUMBNAILS_DASHBOARD_ENABLED") ??
+        (fileConfig.thumbnails?.dashboardEnabled !== undefined
           ? Boolean(fileConfig.thumbnails.dashboardEnabled)
-          : DEFAULT_CONFIG.thumbnails.dashboardEnabled,
+          : DEFAULT_CONFIG.thumbnails.dashboardEnabled),
       wallEnabled:
-        fileConfig.thumbnails?.wallEnabled !== undefined
+        envBoolOverride("OVERLORD_THUMBNAILS_WALL_ENABLED") ??
+        (fileConfig.thumbnails?.wallEnabled !== undefined
           ? Boolean(fileConfig.thumbnails.wallEnabled)
-          : DEFAULT_CONFIG.thumbnails.wallEnabled,
+          : DEFAULT_CONFIG.thumbnails.wallEnabled),
     },
   };
 
