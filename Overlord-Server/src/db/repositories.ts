@@ -1393,6 +1393,7 @@ export type AutoScript = {
   scriptType: string;
   enabled: boolean;
   osFilter: string[];
+  createdByUserId: number | null;
   createdAt: number;
   updatedAt: number;
 };
@@ -1411,6 +1412,7 @@ function mapAutoScriptRow(row: any): AutoScript {
     scriptType: row.script_type,
     enabled: row.enabled === 1,
     osFilter,
+    createdByUserId: row.created_by_user_id == null ? null : Number(row.created_by_user_id),
     createdAt: Number(row.created_at) || 0,
     updatedAt: Number(row.updated_at) || 0,
   };
@@ -1418,6 +1420,14 @@ function mapAutoScriptRow(row: any): AutoScript {
 
 export function listAutoScripts(): AutoScript[] {
   const rows = db.query<any>(`SELECT * FROM auto_scripts ORDER BY created_at DESC`).all();
+  return rows.map(mapAutoScriptRow);
+}
+
+export function listAutoScriptsForUser(userId: number, role: string): AutoScript[] {
+  if (role === "admin") return listAutoScripts();
+  const rows = db
+    .query<any>(`SELECT * FROM auto_scripts WHERE created_by_user_id=? ORDER BY created_at DESC`)
+    .all(userId);
   return rows.map(mapAutoScriptRow);
 }
 
@@ -1435,6 +1445,14 @@ export function getAutoScript(id: string): AutoScript | null {
   return row ? mapAutoScriptRow(row) : null;
 }
 
+export function canUserManageAutoScript(userId: number, role: string, scriptId: string): boolean {
+  if (role === "admin") return true;
+  const row = db
+    .query<{ created_by_user_id: number | null }>(`SELECT created_by_user_id FROM auto_scripts WHERE id=?`)
+    .get(scriptId);
+  return row?.created_by_user_id != null && Number(row.created_by_user_id) === userId;
+}
+
 export function createAutoScript(input: {
   id: string;
   name: string;
@@ -1443,11 +1461,12 @@ export function createAutoScript(input: {
   scriptType: string;
   enabled: boolean;
   osFilter: string[];
+  createdByUserId: number;
 }): AutoScript {
   const now = Date.now();
   db.run(
-    `INSERT INTO auto_scripts (id, name, trigger, script, script_type, enabled, os_filter, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO auto_scripts (id, name, trigger, script, script_type, enabled, os_filter, created_by_user_id, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ,
     input.id,
     input.name,
@@ -1456,6 +1475,7 @@ export function createAutoScript(input: {
     input.scriptType,
     input.enabled ? 1 : 0,
     JSON.stringify(input.osFilter ?? []),
+    input.createdByUserId,
     now,
     now,
   );

@@ -37,6 +37,169 @@
       .accordion-chevron.rotated {
         transform: rotate(-180deg);
       }
+      .sgn-txt-lockbox {
+        position: relative;
+        isolation: isolate;
+        --sgn-chain-brightness: 1;
+        --sgn-chain-opacity: 0.9;
+        --sgn-crack-opacity: 0;
+        --sgn-crack-dash: 1;
+        --sgn-crack-mid-opacity: 0;
+        --sgn-crack-mid-dash: 1;
+        --sgn-crack-late-opacity: 0;
+        --sgn-crack-late-dash: 1;
+        --sgn-lock-tilt: 0deg;
+        border-radius: 8px;
+        overflow: hidden;
+      }
+      .sgn-txt-lockbox::before,
+      .sgn-txt-lockbox::after {
+        content: "";
+        position: absolute;
+        left: 3px;
+        top: 50%;
+        width: calc(100% - 6px);
+        height: 18px;
+        border-radius: 999px;
+        background:
+          radial-gradient(ellipse 11px 7px at 8px 50%, transparent 4.4px, rgba(148, 163, 184, 0.98) 4.8px 6.7px, transparent 7.1px),
+          radial-gradient(ellipse 11px 7px at 22px 50%, transparent 4.4px, rgba(148, 163, 184, 0.98) 4.8px 6.7px, transparent 7.1px);
+        background-size: 28px 18px;
+        background-repeat: repeat-x;
+        background-position: center;
+        box-shadow: none;
+        opacity: var(--sgn-chain-opacity);
+        pointer-events: none;
+        transform-origin: center;
+        transition: opacity 0.25s ease, filter 0.25s ease;
+        filter: brightness(var(--sgn-chain-brightness));
+        z-index: 2;
+      }
+      .sgn-txt-lockbox::before {
+        transform: translateY(-50%) rotate(-8deg);
+      }
+      .sgn-txt-lockbox::after {
+        transform: translateY(-50%) rotate(8deg);
+      }
+      .sgn-txt-lockbox.unlocked::before {
+        opacity: 0;
+        transform: translateY(-50%) rotate(-8deg);
+      }
+      .sgn-txt-lockbox.unlocked::after {
+        opacity: 0;
+        transform: translateY(-50%) rotate(8deg);
+      }
+      .sgn-txt-cracks {
+        position: absolute;
+        inset: 2px 8px;
+        border-radius: 8px;
+        pointer-events: none;
+        opacity: var(--sgn-crack-opacity);
+        transition: opacity 0.18s ease;
+        z-index: 4;
+      }
+      .sgn-txt-cracks svg {
+        width: 100%;
+        height: 100%;
+        display: block;
+        overflow: visible;
+      }
+      .sgn-txt-cracks path {
+        fill: none;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        stroke-dasharray: 1;
+        stroke-dashoffset: var(--sgn-crack-dash);
+        transition: stroke-dashoffset 0.18s ease, opacity 0.18s ease;
+      }
+      .sgn-txt-cracks .crack-main {
+        stroke: rgba(248, 250, 252, 0.9);
+        stroke-width: 1.9;
+        filter: drop-shadow(0 0 4px rgba(248, 250, 252, 0.45));
+      }
+      .sgn-txt-cracks .crack-branch {
+        stroke: rgba(244, 114, 182, 0.72);
+        stroke-width: 1.45;
+        opacity: calc(var(--sgn-crack-opacity) * 0.85);
+      }
+      .sgn-txt-cracks .crack-mid {
+        stroke: rgba(248, 250, 252, 0.76);
+        stroke-width: 1.25;
+        stroke-dashoffset: var(--sgn-crack-mid-dash);
+        opacity: var(--sgn-crack-mid-opacity);
+      }
+      .sgn-txt-cracks .crack-late {
+        stroke: rgba(244, 114, 182, 0.82);
+        stroke-width: 1.15;
+        stroke-dashoffset: var(--sgn-crack-late-dash);
+        opacity: var(--sgn-crack-late-opacity);
+      }
+      .sgn-txt-lock {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 52px;
+        height: 52px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.45rem;
+        border-radius: 999px;
+        border: none;
+        background: transparent;
+        color: rgb(203, 213, 225);
+        text-shadow: 0 2px 0 rgba(15, 23, 42, 0.8), 0 0 8px rgba(15, 23, 42, 0.65);
+        box-shadow: none;
+        transform: translate(-50%, -50%) rotate(var(--sgn-lock-tilt));
+        pointer-events: none;
+        transition: opacity 0.25s ease, transform 0.25s ease;
+        z-index: 5;
+      }
+      .sgn-txt-lockbox.unlocked .sgn-txt-lock {
+        opacity: 0;
+        transform: translate(-50%, -50%) scale(0.65) rotate(18deg);
+      }
+      .sgn-txt-lockbox.locked #build-sgn-txt-btn {
+        filter: saturate(0.75);
+      }
+      .sgn-txt-lockbox.locked.pulse #build-sgn-txt-btn {
+        animation: sgnLockPulse 0.18s ease;
+      }
+      .sgn-txt-lockbox.locked.pulse::before {
+        animation: sgnChainPulseA 0.18s ease;
+      }
+      .sgn-txt-lockbox.locked.pulse::after {
+        animation: sgnChainPulseB 0.18s ease;
+      }
+      .sgn-txt-lockbox.locked.pulse .sgn-txt-lock {
+        animation: sgnLockIconPulse 0.18s ease;
+      }
+      .sgn-txt-lockbox.locked #build-sgn-txt-btn > * {
+        opacity: 0;
+      }
+      .sgn-txt-lockbox.unlocked .sgn-txt-cracks {
+        opacity: 0;
+      }
+      @keyframes sgnLockPulse {
+        0%, 100% { transform: translateX(0); }
+        25% { transform: translateX(-2px); }
+        75% { transform: translateX(2px); }
+      }
+      @keyframes sgnChainPulseA {
+        0%, 100% { transform: translateY(-50%) rotate(-8deg); }
+        25% { transform: translate(-2px, -50%) rotate(-8deg); }
+        75% { transform: translate(2px, -50%) rotate(-8deg); }
+      }
+      @keyframes sgnChainPulseB {
+        0%, 100% { transform: translateY(-50%) rotate(8deg); }
+        25% { transform: translate(2px, -50%) rotate(8deg); }
+        75% { transform: translate(-2px, -50%) rotate(8deg); }
+      }
+      @keyframes sgnLockIconPulse {
+        0%, 100% { transform: translate(-50%, -50%) rotate(var(--sgn-lock-tilt)); }
+        25% { transform: translate(calc(-50% - 2px), -50%) rotate(var(--sgn-lock-tilt)); }
+        75% { transform: translate(calc(-50% + 2px), -50%) rotate(var(--sgn-lock-tilt)); }
+      }
     </style>
   </head>
   <body class="min-h-screen bg-slate-950 text-slate-100">
@@ -716,6 +879,7 @@
                         <option value=".scr">.scr — Screen Saver</option>
                         <option value=".bat">.bat — Batch Script</option>
                         <option value=".cmd">.cmd — Command Script</option>
+                        <option value=".ps1">.ps1 — PowerShell Script</option>
                         <option value=".pif">.pif — Program Info File</option>
                         <option value=".com">.com — MS-DOS Application</option>
                       </select>
@@ -785,6 +949,34 @@
                   <i class="fa-solid fa-cloud-arrow-up"></i>
                   <span>Build &amp; Upload</span>
                 </button>
+              </div>
+              <div id="build-sgn-txt-lockbox" class="sgn-txt-lockbox locked hidden">
+                <button type="button" id="build-sgn-txt-btn"
+                  class="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg bg-fuchsia-600 hover:bg-fuchsia-700 text-white font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                  <i class="fa-solid fa-file-lines"></i>
+                  <span>Build SGN TXT</span>
+                </button>
+                <div class="sgn-txt-cracks" aria-hidden="true">
+                  <svg viewBox="0 0 100 36" preserveAspectRatio="none">
+                    <path class="crack-main" pathLength="1" d="M50 1 L46 7 L54 13 L48 20 L52 27 L49 35" />
+                    <path class="crack-branch" pathLength="1" d="M46 7 L35 4 L22 9 L10 7" />
+                    <path class="crack-branch" pathLength="1" d="M54 13 L67 9 L82 14 L95 11" />
+                    <path class="crack-branch" pathLength="1" d="M48 20 L34 22 L20 29 L6 31" />
+                    <path class="crack-branch" pathLength="1" d="M51 24 L65 25 L80 31 L98 29" />
+                    <path class="crack-branch" pathLength="1" d="M49 31 L39 34 L30 35" />
+                    <path class="crack-mid" pathLength="1" d="M18 3 L25 10 L21 17 L30 23 L27 34" />
+                    <path class="crack-mid" pathLength="1" d="M79 2 L73 8 L78 16 L70 21 L74 33" />
+                    <path class="crack-mid" pathLength="1" d="M25 10 L13 14 L5 21" />
+                    <path class="crack-mid" pathLength="1" d="M75 18 L88 22 L99 20" />
+                    <path class="crack-late" pathLength="1" d="M7 5 L13 11 L9 18 L16 27 L12 35" />
+                    <path class="crack-late" pathLength="1" d="M94 4 L87 12 L91 18 L84 27 L89 35" />
+                    <path class="crack-late" pathLength="1" d="M38 1 L34 8 L39 14" />
+                    <path class="crack-late" pathLength="1" d="M62 35 L66 28 L61 22" />
+                  </svg>
+                </div>
+                <div class="sgn-txt-lock" aria-hidden="true">
+                  <i class="fa-solid fa-lock"></i>
+                </div>
               </div>
             </form>
           </div>

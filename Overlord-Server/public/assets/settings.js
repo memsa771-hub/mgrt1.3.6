@@ -39,6 +39,14 @@ const prefDesktopNotificationsInput = document.getElementById("pref-desktop-noti
 const prefDesktopNotificationsHint = document.getElementById("pref-desktop-notifications-hint");
 const prefRefreshSecondsInput = document.getElementById("pref-refresh-seconds");
 
+const inputArchiveUserForm = document.getElementById("input-archive-user-form");
+const inputArchiveMyEnabledInput = document.getElementById("input-archive-my-enabled");
+const inputArchiveAdminForm = document.getElementById("input-archive-admin-form");
+const inputArchiveGlobalEnabledInput = document.getElementById("input-archive-global-enabled");
+const inputArchiveRetentionDaysInput = document.getElementById("input-archive-retention-days");
+const inputArchiveMaxFileMbInput = document.getElementById("input-archive-max-file-mb");
+const inputArchivePollSecondsInput = document.getElementById("input-archive-poll-seconds");
+
 const myTelegramChatIdInput = document.getElementById("my-telegram-chat-id");
 const saveMyTelegramBtn = document.getElementById("save-my-telegram");
 
@@ -216,6 +224,7 @@ async function renderPermissionsOverview() {
         "system:chat",
         "system:appearance",
         "system:thumbnails",
+        "system:input-archive",
         "system:build-limits",
         "system:export-import",
         "system:health",
@@ -1234,6 +1243,81 @@ async function loadChatSettings() {
   } catch {
     console.warn("Failed to load chat settings");
   }
+}
+
+async function loadInputArchiveSettings() {
+  try {
+    const res = await fetch("/api/settings/input-archive", { credentials: "include" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return;
+    if (inputArchiveMyEnabledInput) inputArchiveMyEnabledInput.checked = !!data.myEnabled;
+    const cfg = data.inputArchive || {};
+    if (inputArchiveGlobalEnabledInput) inputArchiveGlobalEnabledInput.checked = !!cfg.enabled;
+    if (inputArchiveRetentionDaysInput) inputArchiveRetentionDaysInput.value = cfg.retentionDays ?? 7;
+    if (inputArchiveMaxFileMbInput) inputArchiveMaxFileMbInput.value = Math.max(1, Math.round((Number(cfg.maxFileBytes) || 0) / 1024 / 1024)) || 5;
+    if (inputArchivePollSecondsInput) inputArchivePollSecondsInput.value = cfg.pollIntervalSeconds ?? 300;
+  } catch {
+    console.warn("Failed to load input archive settings");
+  }
+}
+
+async function saveInputArchivePreference(event) {
+  event.preventDefault();
+  const res = await fetch("/api/settings/input-archive", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ myEnabled: !!inputArchiveMyEnabledInput?.checked }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    showMessage(data.error || "Failed to save input archive preference.", "error");
+    return;
+  }
+  showMessage("Input archive preference saved.");
+}
+
+async function saveInputArchiveAdminSettings(event) {
+  event.preventDefault();
+  if (!requireUiPermission("system:input-archive", "Input archive settings permission required.")) {
+    return;
+  }
+
+  const retentionDays = Number(inputArchiveRetentionDaysInput?.value);
+  const maxFileMb = Number(inputArchiveMaxFileMbInput?.value);
+  const pollIntervalSeconds = Number(inputArchivePollSecondsInput?.value);
+  if (!Number.isFinite(retentionDays) || retentionDays < 1 || retentionDays > 365) {
+    showMessage("Archive retention must be 1-365 days.", "error");
+    return;
+  }
+  if (!Number.isFinite(maxFileMb) || maxFileMb < 1 || maxFileMb > 50) {
+    showMessage("Max file size must be 1-50 MB.", "error");
+    return;
+  }
+  if (!Number.isFinite(pollIntervalSeconds) || pollIntervalSeconds < 0 || pollIntervalSeconds > 86400) {
+    showMessage("Poll interval must be 0-86400 seconds.", "error");
+    return;
+  }
+
+  const res = await fetch("/api/settings/input-archive", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({
+      inputArchive: {
+        enabled: !!inputArchiveGlobalEnabledInput?.checked,
+        retentionDays,
+        maxFileBytes: Math.round(maxFileMb * 1024 * 1024),
+        pollIntervalSeconds: Math.round(pollIntervalSeconds),
+      },
+    }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    showMessage(data.error || "Failed to save input archive settings.", "error");
+    return;
+  }
+  showMessage("Input archive settings saved.");
 }
 
 async function saveChatSettings(event) {
@@ -2308,6 +2392,7 @@ async function init() {
     await loadTlsSettings();
     await loadAppearanceSettings();
     await loadChatSettings();
+    await loadInputArchiveSettings();
     await loadBannedIps();
 
     if (userHas("users:manage")) {
@@ -2357,6 +2442,8 @@ async function init() {
     tlsCertbotAutoBtn.addEventListener("click", runCertbotAutoSetup);
     if (appearanceForm) appearanceForm.addEventListener("submit", saveAppearanceSettings);
     if (chatSettingsForm) chatSettingsForm.addEventListener("submit", saveChatSettings);
+    if (inputArchiveUserForm) inputArchiveUserForm.addEventListener("submit", saveInputArchivePreference);
+    if (inputArchiveAdminForm) inputArchiveAdminForm.addEventListener("submit", saveInputArchiveAdminSettings);
     if (exportSettingsBtn) exportSettingsBtn.addEventListener("click", exportSettings);
     if (importSettingsFile) importSettingsFile.addEventListener("change", importSettings);
     refreshBansBtn.addEventListener("click", loadBannedIps);

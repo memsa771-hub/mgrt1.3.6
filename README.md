@@ -4,7 +4,7 @@
 
 # Overlord
 
-# [TELEGRAM SERVER JOIN NOW NO EXCUSES WE GIVE SUPPORT AND IT'S FUN](https://t.me/WindowsBatch)
+# [TELEGRAM SERVER JOIN NOW NO EXCUSES WE GIVE SUPPORT AND IT'S FUN](https://t.me/Onimai)
 
 Hello, I made this project for fun.
 

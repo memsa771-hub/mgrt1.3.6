@@ -20,7 +20,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -151,7 +150,7 @@ func folderAccessHelp(err error) string {
 	if !canRequestFolderAccess(err) {
 		return ""
 	}
-	return "macOS blocked this folder. Ask the user to allow access in Privacy & Security, then refresh this folder."
+	return "macOS blocked this folder. Confirm the retry, approve the prompt on the Mac, then refresh if needed."
 }
 
 func HandleFileRequestAccess(ctx context.Context, env *agentRuntime.Env, cmdID string, path string) error {
@@ -171,14 +170,12 @@ func HandleFileRequestAccess(ctx context.Context, env *agentRuntime.Env, cmdID s
 		path = absPath
 	}
 
-	settingsURL := "x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders"
-	if err := exec.CommandContext(ctx, "open", settingsURL).Run(); err != nil {
-		_ = exec.CommandContext(ctx, "open", "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles").Run()
+	if _, err := os.ReadDir(path); err != nil {
 		return wire.WriteMsg(ctx, env.Conn, wire.CommandResult{
 			Type:      "command_result",
 			CommandID: cmdID,
 			OK:        false,
-			Message:   fmt.Sprintf("could not open macOS Privacy settings: %v", err),
+			Message:   fmt.Sprintf("macOS still blocked folder access for %s: %v", path, err),
 		})
 	}
 
@@ -186,7 +183,7 @@ func HandleFileRequestAccess(ctx context.Context, env *agentRuntime.Env, cmdID s
 		Type:      "command_result",
 		CommandID: cmdID,
 		OK:        true,
-		Message:   fmt.Sprintf("opened macOS Privacy settings for folder access; ask the user to allow access for this app, then refresh %s", path),
+		Message:   fmt.Sprintf("macOS allowed folder access for %s", path),
 	})
 }
 

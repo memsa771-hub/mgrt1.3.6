@@ -1,8 +1,9 @@
 import { authenticateRequest } from "../../auth";
 import {
+  canUserManageAutoScript,
   createAutoScript,
   deleteAutoScript,
-  listAutoScripts,
+  listAutoScriptsForUser,
   type AutoScriptTrigger,
   updateAutoScript,
 } from "../../db";
@@ -23,13 +24,13 @@ export async function handleAutoScriptsRoutes(
       });
     }
     try {
-      requirePermission(user, "clients:control");
+      requirePermission(user, "scripts:manage");
     } catch (error) {
       if (error instanceof Response) return error;
       return new Response("Forbidden", { status: 403 });
     }
 
-    return Response.json({ items: listAutoScripts() });
+    return Response.json({ items: listAutoScriptsForUser(user.userId, user.role) });
   }
 
   if (req.method === "POST" && url.pathname === "/api/auto-scripts") {
@@ -84,6 +85,7 @@ export async function handleAutoScriptsRoutes(
       scriptType,
       enabled,
       osFilter,
+      createdByUserId: user.userId,
     });
 
     return Response.json({ ok: true, item });
@@ -129,7 +131,12 @@ export async function handleAutoScriptsRoutes(
       ? osFilterRaw.filter((v: unknown) => typeof v === "string" && ALLOWED_OS_FILTERS.has(v))
       : undefined;
 
-    const updated = updateAutoScript(autoScriptMatch[1], {
+    const scriptId = autoScriptMatch[1];
+    if (!canUserManageAutoScript(user.userId, user.role, scriptId)) {
+      return Response.json({ error: "Not found" }, { status: 404 });
+    }
+
+    const updated = updateAutoScript(scriptId, {
       name: body?.name ? String(body.name).trim() : undefined,
       trigger: triggerRaw as AutoScriptTrigger | undefined,
       script: body?.script ? String(body.script) : undefined,
@@ -160,7 +167,12 @@ export async function handleAutoScriptsRoutes(
       return new Response("Forbidden", { status: 403 });
     }
 
-    deleteAutoScript(autoScriptMatch[1]);
+    const scriptId = autoScriptMatch[1];
+    if (!canUserManageAutoScript(user.userId, user.role, scriptId)) {
+      return Response.json({ error: "Not found" }, { status: 404 });
+    }
+
+    deleteAutoScript(scriptId);
     return Response.json({ ok: true });
   }
 

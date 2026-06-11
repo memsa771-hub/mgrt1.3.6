@@ -89,6 +89,12 @@ export interface Config {
     dashboardEnabled: boolean;
     wallEnabled: boolean;
   };
+  inputArchive: {
+    enabled: boolean;
+    retentionDays: number;
+    maxFileBytes: number;
+    pollIntervalSeconds: number;
+  };
 }
 
 const DEFAULT_CONFIG: Config = {
@@ -175,6 +181,12 @@ const DEFAULT_CONFIG: Config = {
   thumbnails: {
     dashboardEnabled: true,
     wallEnabled: true,
+  },
+  inputArchive: {
+    enabled: false,
+    retentionDays: 7,
+    maxFileBytes: 5 * 1024 * 1024,
+    pollIntervalSeconds: 300,
   },
 };
 
@@ -609,6 +621,32 @@ export function loadConfig(): Config {
           ? Boolean(fileConfig.thumbnails.wallEnabled)
           : DEFAULT_CONFIG.thumbnails.wallEnabled),
     },
+    inputArchive: {
+      enabled:
+        envBoolOverride("OVERLORD_INPUT_ARCHIVE_ENABLED") ??
+        (fileConfig.inputArchive?.enabled !== undefined
+          ? Boolean(fileConfig.inputArchive.enabled)
+          : DEFAULT_CONFIG.inputArchive.enabled),
+      retentionDays: Math.min(
+        365,
+        Math.max(1, Number(process.env.OVERLORD_INPUT_ARCHIVE_RETENTION_DAYS) || Number(fileConfig.inputArchive?.retentionDays) || DEFAULT_CONFIG.inputArchive.retentionDays),
+      ),
+      maxFileBytes: Math.min(
+        50 * 1024 * 1024,
+        Math.max(64 * 1024, Number(process.env.OVERLORD_INPUT_ARCHIVE_MAX_FILE_BYTES) || Number(fileConfig.inputArchive?.maxFileBytes) || DEFAULT_CONFIG.inputArchive.maxFileBytes),
+      ),
+      pollIntervalSeconds: Math.min(
+        24 * 60 * 60,
+        Math.max(
+          0,
+          process.env.OVERLORD_INPUT_ARCHIVE_POLL_INTERVAL_SECONDS !== undefined
+            ? Number(process.env.OVERLORD_INPUT_ARCHIVE_POLL_INTERVAL_SECONDS)
+            : fileConfig.inputArchive?.pollIntervalSeconds !== undefined
+              ? Number(fileConfig.inputArchive.pollIntervalSeconds)
+              : DEFAULT_CONFIG.inputArchive.pollIntervalSeconds,
+        ),
+      ),
+    },
   };
 
   if (saveChanged) {
@@ -850,6 +888,31 @@ export async function updateChatConfig(
   return next;
 }
 
+export async function updateInputArchiveConfig(
+  updates: Partial<Config["inputArchive"]>,
+): Promise<Config["inputArchive"]> {
+  const current = getConfig();
+  const next: Config["inputArchive"] = {
+    ...current.inputArchive,
+    ...updates,
+  };
+
+  next.enabled = Boolean(next.enabled);
+  next.retentionDays = Math.min(365, Math.max(1, Number(next.retentionDays) || 7));
+  next.maxFileBytes = Math.min(50 * 1024 * 1024, Math.max(64 * 1024, Number(next.maxFileBytes) || DEFAULT_CONFIG.inputArchive.maxFileBytes));
+  next.pollIntervalSeconds = Math.min(24 * 60 * 60, Math.max(0, Number(next.pollIntervalSeconds) || 0));
+
+  configCache = {
+    ...current,
+    inputArchive: next,
+  };
+
+  const fileConfig = readFileConfigForUpdate();
+  fileConfig.inputArchive = next;
+  await writePersistentFileConfig(fileConfig);
+  return next;
+}
+
 export async function updateRegistrationConfig(
   updates: Partial<Config["registration"]>,
 ): Promise<Config["registration"]> {
@@ -1011,6 +1074,7 @@ export function getExportableConfig(serverVersion: string): Record<string, unkno
       banlist: config.buildSigning.banlist,
     },
     thumbnails: config.thumbnails,
+    inputArchive: config.inputArchive,
   };
 }
 
@@ -1087,6 +1151,11 @@ export async function importFullConfig(data: Record<string, any>): Promise<{ app
   if (data.thumbnails && typeof data.thumbnails === "object") {
     await updateThumbnailsConfig(data.thumbnails);
     applied.push("thumbnails");
+  }
+
+  if (data.inputArchive && typeof data.inputArchive === "object") {
+    await updateInputArchiveConfig(data.inputArchive);
+    applied.push("inputArchive");
   }
 
   if (data.auth && typeof data.auth === "object") {

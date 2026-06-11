@@ -47,6 +47,7 @@ export type BuildConfig = {
   shellcodeConsole?: boolean;
   useSgn?: boolean;
   sgnIterations?: number;
+  outputSgnTxt?: boolean;
   criticalProcess?: boolean;
   disableKeylogger?: boolean;
   enableWebrtc?: boolean;

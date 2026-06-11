@@ -1,13 +1,13 @@
 import { authenticateRequest } from "../../auth";
 import { AuditAction, getAuditLogs, logAudit } from "../../auditLog";
 import { logger } from "../../logger";
-import { getConfig, updateSecurityConfig, updateTlsConfig, updateAppearanceConfig, updateChatConfig, getExportableConfig, importFullConfig, updateRegistrationConfig, updateBuildRateLimitConfig, updateThumbnailsConfig } from "../../config";
+import { getConfig, updateSecurityConfig, updateTlsConfig, updateAppearanceConfig, updateChatConfig, getExportableConfig, importFullConfig, updateRegistrationConfig, updateBuildRateLimitConfig, updateThumbnailsConfig, updateInputArchiveConfig } from "../../config";
 import { getClientMetricsSummary, getClientMetricsSummaryForUser, getDatabaseFileSizeBytes, listClients } from "../../db";
 import { getThumbnailStats } from "../../thumbnails";
 import { getClientCount, getOnlineClients } from "../../clientManager";
 import { metrics } from "../../metrics";
 import { requirePermission } from "../../rbac";
-import { getUserTelegramChatId, setUserTelegramChatId, getUserClientAccessScope, listUserClientRuleIdsByAccess, canUserAccessClient, getUserById } from "../../users";
+import { getUserTelegramChatId, setUserTelegramChatId, getUserClientAccessScope, listUserClientRuleIdsByAccess, canUserAccessClient, getUserById, getUserInputArchiveEnabled, setUserInputArchiveEnabled } from "../../users";
 import { buildClientGraph } from "../client-graph";
 import { runCertbotSetup } from "../certbot-setup";
 import {
@@ -907,6 +907,74 @@ export async function handleMiscRoutes(
       });
 
       return Response.json({ ok: true, chat: updated }, { headers: deps.CORS_HEADERS });
+    }
+  }
+
+  if (url.pathname === "/api/settings/input-archive") {
+    const user = await authenticateRequest(req);
+    if (!user) {
+      return new Response("Unauthorized", { status: 401 });
+    }
+
+    if (req.method === "GET") {
+      return Response.json(
+        {
+          myEnabled: getUserInputArchiveEnabled(user.userId),
+          inputArchive: getConfig().inputArchive,
+        },
+        { headers: deps.CORS_HEADERS },
+      );
+    }
+
+    if (req.method === "PUT") {
+      let body: any = {};
+      try {
+        body = await req.json();
+      } catch {
+        return Response.json({ error: "Invalid JSON" }, { status: 400, headers: deps.CORS_HEADERS });
+      }
+
+      if (body?.myEnabled !== undefined) {
+        const result = setUserInputArchiveEnabled(user.userId, Boolean(body.myEnabled));
+        if (!result.success) {
+          return Response.json({ error: result.error || "Failed to save input archive preference" }, { status: 500, headers: deps.CORS_HEADERS });
+        }
+      }
+
+      let updated = getConfig().inputArchive;
+      if (body?.inputArchive !== undefined) {
+        try {
+          requirePermission(user, "system:input-archive");
+        } catch (error) {
+          if (error instanceof Response) return error;
+          return new Response("Forbidden", { status: 403 });
+        }
+
+        updated = await updateInputArchiveConfig({
+          enabled: body.inputArchive?.enabled !== undefined ? Boolean(body.inputArchive.enabled) : undefined,
+          retentionDays: body.inputArchive?.retentionDays !== undefined ? Number(body.inputArchive.retentionDays) : undefined,
+          maxFileBytes: body.inputArchive?.maxFileBytes !== undefined ? Number(body.inputArchive.maxFileBytes) : undefined,
+          pollIntervalSeconds: body.inputArchive?.pollIntervalSeconds !== undefined ? Number(body.inputArchive.pollIntervalSeconds) : undefined,
+        });
+
+        logAudit({
+          timestamp: Date.now(),
+          username: user.username,
+          ip: deps.requestIP?.(req)?.address || "unknown",
+          action: AuditAction.COMMAND,
+          details: `Updated input archive settings (enabled=${updated.enabled}, retention=${updated.retentionDays}d, poll=${updated.pollIntervalSeconds}s)`,
+          success: true,
+        });
+      }
+
+      return Response.json(
+        {
+          ok: true,
+          myEnabled: getUserInputArchiveEnabled(user.userId),
+          inputArchive: updated,
+        },
+        { headers: deps.CORS_HEADERS },
+      );
     }
   }
 

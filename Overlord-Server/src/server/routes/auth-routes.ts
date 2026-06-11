@@ -502,6 +502,7 @@ export async function handleAuthRoutes(
         mustChangePassword: dbUser ? Boolean(dbUser.must_change_password) : false,
         canBuild: dbUser ? Boolean(dbUser.can_build) : false,
         telegramChatId: dbUser?.telegram_chat_id || "",
+        inputArchiveEnabled: dbUser ? Boolean((dbUser as any).keylog_archive_enabled) : false,
         featurePermissions,
         permissions,
       }),

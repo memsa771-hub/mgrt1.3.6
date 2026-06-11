@@ -8,6 +8,24 @@ import type { SocketData } from "../sessions/types";
 import type { ClientInfo } from "../types";
 import { logAudit, AuditAction } from "../auditLog";
 import { ALLOWED_SCRIPT_TYPES } from "./validation-constants";
+import { canUserAccessClient, getUserById } from "../users";
+
+function autoScriptCanRunOnClient(script: { id: string; createdByUserId: number | null }, clientId: string): boolean {
+  if (script.createdByUserId == null) {
+    return true;
+  }
+
+  const owner = getUserById(script.createdByUserId);
+  if (!owner) {
+    logger.warn(`[auto-script] skipping ${script.id}: owner user ${script.createdByUserId} no longer exists`);
+    return false;
+  }
+  if (owner.role === "admin") {
+    return true;
+  }
+
+  return canUserAccessClient(owner.id, owner.role, clientId);
+}
 
 export function dispatchAutoScriptsForConnection(
   info: ClientInfo,
@@ -28,6 +46,10 @@ export function dispatchAutoScriptsForConnection(
   }
 
   for (const script of scripts) {
+    if (!autoScriptCanRunOnClient(script, info.id)) {
+      continue;
+    }
+
     if (script.osFilter.length > 0) {
       const clientOs = (info.os || "").toLowerCase();
       if (!script.osFilter.includes(clientOs)) {

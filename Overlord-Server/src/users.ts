@@ -25,6 +25,7 @@ export interface User {
   mfa_secret: string | null;
   mfa_enabled: number;
   mfa_enabled_at: number | null;
+  keylog_archive_enabled: number;
 }
 
 export interface UserInfo {
@@ -41,6 +42,7 @@ export interface UserInfo {
   telegram_chat_id: string | null;
   mfa_enabled: number;
   mfa_enabled_at: number | null;
+  keylog_archive_enabled?: number;
 }
 
 export interface UserClientAccessRule {
@@ -125,6 +127,29 @@ export function getUserByUsername(username: string): User | null {
     .prepare("SELECT * FROM users WHERE username = ?")
     .get(username) as User | undefined;
   return user || null;
+}
+
+export function getUserInputArchiveEnabled(userId: number): boolean {
+  const row = db
+    .prepare("SELECT keylog_archive_enabled FROM users WHERE id = ?")
+    .get(userId) as { keylog_archive_enabled?: number } | undefined;
+  return row?.keylog_archive_enabled === 1;
+}
+
+export function setUserInputArchiveEnabled(userId: number, enabled: boolean): { success: boolean; error?: string } {
+  try {
+    db.prepare("UPDATE users SET keylog_archive_enabled = ? WHERE id = ?").run(enabled ? 1 : 0, userId);
+    return { success: true };
+  } catch (err: any) {
+    logger.error("[users] setUserInputArchiveEnabled error:", err);
+    return { success: false, error: err.message || "Failed to update input archive preference" };
+  }
+}
+
+export function getUsersWithInputArchiveEnabled(): Array<{ id: number; username: string; role: UserRole; client_scope: ClientAccessScope }> {
+  return db
+    .prepare("SELECT id, username, role, client_scope FROM users WHERE keylog_archive_enabled = 1")
+    .all() as any[];
 }
 
 export function listUsers(): UserInfo[] {

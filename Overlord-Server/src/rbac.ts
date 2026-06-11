@@ -115,6 +115,10 @@ const PERMISSIONS = {
     description: "Change screenshot thumbnail settings",
     roles: ["admin"],
   },
+  "system:input-archive": {
+    description: "Change input log archive settings",
+    roles: ["admin"],
+  },
   "system:build-limits": {
     description: "Change build rate limit settings",
     roles: ["admin"],

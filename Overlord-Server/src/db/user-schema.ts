@@ -224,6 +224,10 @@ export function initializeUserSchema(): void {
         addColumnIfMissing("users", `mfa_enabled_at INTEGER DEFAULT NULL`);
       },
     },
+    {
+      id: "014_users_keylog_archive_enabled",
+      run: () => addColumnIfMissing("users", `keylog_archive_enabled INTEGER NOT NULL DEFAULT 0`),
+    },
   ];
 
   runMigrations(userMigrations);
