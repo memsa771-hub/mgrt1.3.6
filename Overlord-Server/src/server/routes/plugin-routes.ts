@@ -902,23 +902,19 @@ export async function handlePluginRoutes(
     }
 
     if (!deps.isPluginLoaded(targetId, pluginId)) {
-      let hasNativeBinary = false;
-      try {
-        const bundle = await deps.loadPluginBundle(pluginId, target.os, target.arch);
-        hasNativeBinary = !!bundle.binaryPath;
-        if (hasNativeBinary) {
-          deps.enqueuePluginEvent(targetId, pluginId, event, payload);
-          if (!deps.isPluginLoading(targetId, pluginId)) {
-            deps.markPluginLoading(targetId, pluginId);
-            deps.sendPluginBundle(target, bundle);
-            metrics.recordCommand("plugin_load");
-          }
-          metrics.recordCommand("plugin_event");
-          return Response.json({ ok: true, queued: true });
+      deps.enqueuePluginEvent(targetId, pluginId, event, payload);
+      if (!deps.isPluginLoading(targetId, pluginId)) {
+        try {
+          const bundle = await deps.loadPluginBundle(pluginId, target.os, target.arch);
+          deps.markPluginLoading(targetId, pluginId);
+          deps.sendPluginBundle(target, bundle);
+          metrics.recordCommand("plugin_load");
+        } catch (err) {
+          return Response.json({ ok: false, error: (err as Error).message }, { status: 400 });
         }
-      } catch (err) {
-        return Response.json({ ok: false, error: (err as Error).message }, { status: 400 });
       }
+      metrics.recordCommand("plugin_event");
+      return Response.json({ ok: true, queued: true });
     }
 
     target.ws.send(
