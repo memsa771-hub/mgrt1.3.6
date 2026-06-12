@@ -4,7 +4,10 @@
 
 set -e
 
-CERT_DIR="./certs"
+SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+
+CERT_DIR="$ROOT/certs"
 DAYS=3650  # 10 years
 COUNTRY="US"
 STATE="State"

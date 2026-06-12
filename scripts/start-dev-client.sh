@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -eu
-ROOT="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 CLIENT_DIR="$ROOT/Overlord-Client"
 DIST_DIR="$ROOT/dist-clients"
 GO_BIN="${GO_BIN:-go}"

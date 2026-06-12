@@ -3,9 +3,10 @@ setlocal EnableDelayedExpansion
 REM Build BackstageInjection DLL for Windows x64 using MSBuild (vcxproj).
 REM Run from VS Developer Command Prompt, or let the script detect VS.
 
-set ROOT=%~dp0
-set PROJ=%ROOT%BackstageInjection\BackstageInjection.vcxproj
-set OUT_DIR=%ROOT%Overlord-Server\dist-clients
+set "SCRIPT_DIR=%~dp0"
+for %%I in ("%SCRIPT_DIR%..") do set "ROOT=%%~fI\"
+set "PROJ=%ROOT%BackstageInjection\BackstageInjection.vcxproj"
+set "OUT_DIR=%ROOT%Overlord-Server\dist-clients"
 set CONFIG=Release
 set PLATFORM=x64
 

@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
+SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+
 echo "=== Building Overlord Desktop (Tauri) ==="
-cd "$(dirname "$0")/Overlord-Desktop"
+cd "$ROOT/Overlord-Desktop"
 
 if ! command -v bun >/dev/null 2>&1; then
   echo "error: bun is required (https://bun.sh)" >&2

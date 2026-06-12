@@ -1,6 +1,7 @@
 @echo off
 setlocal EnableExtensions
-set "ROOT=%~dp0"
+set "SCRIPT_DIR=%~dp0"
+for %%I in ("%SCRIPT_DIR%..") do set "ROOT=%%~fI\"
 set "SERVER_SRC=%ROOT%Overlord-Server"
 set "CLIENT_SRC=%ROOT%Overlord-Client"
 set "RELEASE_DIR=%ROOT%release"
@@ -122,13 +123,17 @@ echo Run this from the package folder:
 echo      start-prod-release.bat
 echo Or on Linux:
 echo      chmod +x start-prod-release.sh overlord-server-linux-x64 ^&^& ./start-prod-release.sh
+endlocal
 exit /b 0
 
 :robocopy_err
 echo [error] Copy operation failed ^(robocopy exit code %errorlevel%^)
+popd >nul 2>&1
+endlocal
 exit /b 1
 
 :err
 popd >nul 2>&1
 echo [error] Build/package failed.
+endlocal
 exit /b 1

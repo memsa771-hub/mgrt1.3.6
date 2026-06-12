@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -eu
-ROOT="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 
 # Dispatcher script kept for backwards compatibility.
 # Usage:
@@ -8,7 +9,6 @@ ROOT="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 #   ./start-dev.sh server     # start only server
 #   ./start-dev.sh client     # start only client
 
-SCRIPT_DIR="$ROOT"
 SERVER_SCRIPT="$SCRIPT_DIR/start-dev-server.sh"
 CLIENT_SCRIPT="$SCRIPT_DIR/start-dev-client.sh"
 

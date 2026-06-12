@@ -4,7 +4,10 @@ REM Requires OpenSSL to be installed and in PATH
 
 setlocal EnableDelayedExpansion
 
-set CERT_DIR=.\certs
+set "SCRIPT_DIR=%~dp0"
+for %%I in ("%SCRIPT_DIR%..") do set "ROOT=%%~fI\"
+
+set "CERT_DIR=%ROOT%certs"
 set DAYS=3650
 set COUNTRY=US
 set STATE=State

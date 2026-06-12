@@ -1130,6 +1130,18 @@ func HandleCommand(ctx context.Context, env *runtime.Env, envelope map[string]in
 		capture.SetMaxResolution(maxH)
 		sendCommandResultSafe(env, cmdID, true, "")
 		return nil
+	case "hvnc_set_fps":
+		payload, _ := envelope["payload"].(map[string]interface{})
+		fps := 120
+		if payload != nil {
+			if v, ok := payloadInt(payload, "fps"); ok {
+				fps = v
+			}
+		}
+		fps = SetHVNCTargetFPS(fps)
+		log.Printf("hvnc: set target fps=%d", fps)
+		sendCommandResultSafe(env, cmdID, true, "")
+		return nil
 	case "hvnc_set_quality":
 		payload, _ := envelope["payload"].(map[string]interface{})
 		quality := 90

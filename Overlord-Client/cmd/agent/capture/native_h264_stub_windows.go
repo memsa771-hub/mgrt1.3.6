@@ -5,7 +5,7 @@ package capture
 import "fmt"
 import "unsafe"
 
-func newNativeH264Encoder(width, height, fps int) (h264FrameEncoder, error) {
+func newNativeH264Encoder(stream string, width, height, fps int) (h264FrameEncoder, error) {
 	return nil, fmt.Errorf("native NVENC D3D11 requires cgo for %dx%d@%dfps", width, height, fps)
 }
 

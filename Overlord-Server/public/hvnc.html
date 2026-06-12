@@ -148,6 +148,14 @@
                   />
                   <span id="qualityValue" class="pill pill-ghost text-slate-100 text-xs min-w-[44px] text-center">95%</span>
                 </div>
+                <div class="flex items-center gap-2 mb-2">
+                  <label class="text-sm text-slate-300 w-20" for="webrtcMode">Transport</label>
+                  <select id="webrtcMode" class="flex-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-sm text-slate-100" title="Streaming transport. P2P: browser to agent direct, server only relays signaling. Relayed: through MediaMTX.">
+                    <option value="off" selected>Canvas</option>
+                    <option value="p2p">WebRTC P2P</option>
+                    <option value="relayed">WebRTC Relayed</option>
+                  </select>
+                </div>
                 <div class="flex items-center justify-between gap-2">
                   <label class="flex items-center gap-2 text-sm text-slate-200" title="Prefer H.264 when available; disable to force JPEG">
                     <input type="checkbox" id="codecH264" checked /> H.264
@@ -209,6 +217,20 @@
                 height: auto;
               "
             ></canvas>
+            <video
+              id="webrtcVideo"
+              class="bg-slate-950"
+              autoplay
+              playsinline
+              muted
+              style="
+                display: none;
+                max-width: 100%;
+                max-height: 100%;
+                width: auto;
+                height: auto;
+              "
+            ></video>
           </div>
         </div>
         <div

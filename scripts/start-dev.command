@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="$(cd -- "$(dirname "$0")" && pwd)"
-SERVER_SCRIPT="$ROOT/start-dev-server.sh"
-CLIENT_SCRIPT="$ROOT/start-dev-client.sh"
+SCRIPT_DIR="$(cd -- "$(dirname "$0")" && pwd)"
+ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+SERVER_SCRIPT="$SCRIPT_DIR/start-dev-server.sh"
+CLIENT_SCRIPT="$SCRIPT_DIR/start-dev-client.sh"
 
 quote() {
   printf "%q" "$1"
@@ -23,12 +24,12 @@ trap pause_for_error EXIT
 
 if [ "$(uname -s)" != "Darwin" ]; then
   echo "[start-dev] start-dev.command is intended for macOS."
-  echo "[start-dev] Use ./start-dev.sh on this platform."
+  echo "[start-dev] Use ./scripts/start-dev.sh on this platform."
   exit 1
 fi
 
 if ! command -v osascript >/dev/null 2>&1; then
-  echo "[start-dev] osascript was not found. Use ./start-dev.sh from a terminal instead."
+  echo "[start-dev] osascript was not found. Use ./scripts/start-dev.sh from a terminal instead."
   exit 1
 fi
 

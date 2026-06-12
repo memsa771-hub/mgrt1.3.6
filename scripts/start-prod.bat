@@ -1,6 +1,7 @@
 @echo off
 setlocal
-set ROOT=%~dp0
+set "SCRIPT_DIR=%~dp0"
+for %%I in ("%SCRIPT_DIR%..") do set "ROOT=%%~fI\"
 
 REM Simple production launcher for Overlord server.
 REM Builds the Tailwind CSS and server bundle, then runs the compiled executable.
@@ -45,7 +46,7 @@ if defined PORT (
   echo [server] starting on default port...
 )
 echo [server] running compiled executable...
-set OVERLORD_ROOT=%ROOT%Overlord-Server
+set "OVERLORD_ROOT=%ROOT%Overlord-Server"
 call "%ROOT%Overlord-Server\dist\overlord-server.exe"
 popd
 

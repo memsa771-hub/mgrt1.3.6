@@ -1,8 +1,9 @@
 @echo off
 setlocal
-set ROOT=%~dp0
-set CLIENT_DIR=%ROOT%Overlord-Client
-set OUT_DIR=%ROOT%dist-clients
+set "SCRIPT_DIR=%~dp0"
+for %%I in ("%SCRIPT_DIR%..") do set "ROOT=%%~fI\"
+set "CLIENT_DIR=%ROOT%Overlord-Client"
+set "OUT_DIR=%ROOT%dist-clients"
 
 if not defined ENABLE_PERSISTENCE set ENABLE_PERSISTENCE=false
 if not defined OBFUSCATE set OBFUSCATE=false
@@ -228,6 +229,8 @@ goto :eof
 
 :err
 echo Build failed. See errors above.
+popd >nul 2>&1
+endlocal
 exit /b 1
 
 :eof

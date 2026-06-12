@@ -122,4 +122,30 @@ describe("remote desktop viewer control", () => {
     expect(rdStreamingState.get(clientId)?.isStreaming).not.toBe(true);
     expect(viewer.sent.length).toBeGreaterThan(0);
   });
+
+  test("reasserts desktop_start when server stream state is stale", () => {
+    const clientId = `rd-stale-${Date.now().toString(36)}`;
+    const { agentWs } = createClient(clientId);
+    const viewer = createMockWs({ clientId });
+    rdStreamingState.set(clientId, {
+      isStreaming: true,
+      display: 0,
+      quality: 90,
+      codec: "h264",
+      duplication: true,
+      maxHeight: 1080,
+      maxFps: 120,
+      lastFps: 1,
+      lastFrameAt: 0,
+      startedAt: Date.now() - 5000,
+    });
+
+    handleRemoteDesktopViewerOpen(viewer as any);
+    handleRemoteDesktopViewerMessage(viewer as any, JSON.stringify({ type: "desktop_start" }));
+
+    const commands = agentCommands(agentWs);
+    expect(commands.filter((msg) => msg.commandType === "desktop_start")).toHaveLength(1);
+    expect(commands.filter((msg) => msg.commandType === "desktop_request_keyframe")).toHaveLength(0);
+    expect(rdStreamingState.get(clientId)?.isStreaming).toBe(true);
+  });
 });

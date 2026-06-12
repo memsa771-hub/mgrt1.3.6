@@ -47,7 +47,7 @@ bun run build:mac      # macOS DMG
 bun run build:linux    # Linux AppImage
 ```
 
-Or from the repo root: `./build-desktop.sh` (or `build-desktop.bat` on Windows) picks the right target for the current OS.
+Or from the repo root: `./scripts/build-desktop.sh` (or `scripts\build-desktop.bat` on Windows) picks the right target for the current OS.
 
 Output lands in `src-tauri/target/release/bundle/`. The CI workflow in `.github/workflows/desktop-release.yml` builds the Windows NSIS installer on every push to `main` that touches `Overlord-Desktop/` and publishes it as a GitHub Release tagged `Overlord-Desktop-v<version>`.
 

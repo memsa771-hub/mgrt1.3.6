@@ -3,6 +3,7 @@ import { checkFeatureAccess } from "./feature-gate.js";
 import { WhepClient } from "./whep.js";
 import { P2PClient } from "./webrtc-p2p.js";
 import { createKeyboardCapture } from "./keyboard-capture.js";
+import { createSharedUiSettingsSaver, loadSharedUiSettings } from "./shared-ui-settings.js";
 
 (async function () {
   const clientId = new URLSearchParams(location.search).get("clientId");
@@ -17,13 +18,38 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
   const clientLabel = document.getElementById("clientLabel");
   clientLabel.textContent = clientId;
 
-  const ws = new WebSocket(
-    (location.protocol === "https:" ? "wss://" : "ws://") +
+  let ws = null;
+  let reconnectTimer = null;
+  let reconnectDelay = 1000;
+  const maxReconnectDelay = 15000;
+
+  function buildWsUrl() {
+    return (location.protocol === "https:" ? "wss://" : "ws://") +
       location.host +
       "/api/clients/" +
       clientId +
-      "/rd/ws",
-  );
+      "/rd/ws";
+  }
+
+  function connectWs() {
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    ws = new WebSocket(buildWsUrl());
+    ws.binaryType = "arraybuffer";
+    ws.addEventListener("open", onWsOpen);
+    ws.addEventListener("message", onWsMessage);
+    ws.addEventListener("close", onWsClose);
+    ws.addEventListener("error", onWsError);
+  }
+
+  function scheduleReconnect() {
+    if (reconnectTimer) return;
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      setStreamState("connecting", "Reconnecting");
+      connectWs();
+      reconnectDelay = Math.min(reconnectDelay * 1.5, maxReconnectDelay);
+    }, reconnectDelay);
+  }
   const displaySelect = document.getElementById("displaySelect");
   const refreshBtn = document.getElementById("refreshDisplays");
   const startBtn = document.getElementById("startBtn");
@@ -62,8 +88,6 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
   function getWebrtcMode() {
     return webrtcMode ? String(webrtcMode.value || "off") : "off";
   }
-  ws.binaryType = "arraybuffer";
-
   let activeClientId = clientId;
   let serverRecording = null;
   let recordingTimer = null;
@@ -86,7 +110,6 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
   let pendingFrame = null;
   let videoDecoder = null;
   let h264TimestampUs = 0;
-  const codecPrefKey = "rdCodecPreferH264";
   let prefersH264 = typeof VideoDecoder === "function";
   let h264LowFpsStreak = 0;
   let h264FirstFrameAt = 0;
@@ -346,12 +369,72 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
     h264LastDecodeWarnAt = 0;
   }
 
-  const storedCodecPref = localStorage.getItem(codecPrefKey);
-  if (storedCodecPref === "0") {
-    prefersH264 = false;
-  } else if (storedCodecPref === "1") {
-    prefersH264 = typeof VideoDecoder === "function";
+  let savedDisplay = null;
+
+  function setSelectValue(select, value) {
+    if (!select || value === undefined || value === null) return false;
+    const normalized = String(value);
+    const exists = Array.from(select.options || []).some((opt) => opt.value === normalized);
+    if (!exists) return false;
+    select.value = normalized;
+    return true;
   }
+
+  function applySavedDisplay() {
+    if (savedDisplay === null || savedDisplay === undefined) return;
+    setSelectValue(displaySelect, savedDisplay);
+  }
+
+  function applySharedSettings(settings) {
+    if (!settings || typeof settings !== "object") return;
+    savedDisplay = Number.isFinite(Number(settings.display)) ? Number(settings.display) : savedDisplay;
+    setSelectValue(resolutionSelect, settings.resolution);
+    setSelectValue(targetFpsSelect, settings.targetFps);
+    setSelectValue(webrtcMode, settings.webrtcMode);
+    setSelectValue(audioTransport, settings.audioTransport);
+    setSelectValue(recordMode, settings.recordMode);
+    setSelectValue(recordFps, settings.recordFps);
+    if (qualitySlider && settings.quality !== undefined) qualitySlider.value = String(settings.quality);
+    if (smoothingSlider && settings.smoothing !== undefined) {
+      smoothingSlider.value = String(settings.smoothing);
+      smoothingPct = Number(smoothingSlider.value) || 0;
+    }
+    if (mouseCtrl && typeof settings.mouse === "boolean") mouseCtrl.checked = settings.mouse;
+    if (kbdCtrl && typeof settings.keyboard === "boolean") kbdCtrl.checked = settings.keyboard;
+    if (cursorCtrl && typeof settings.cursor === "boolean") cursorCtrl.checked = settings.cursor;
+    if (duplicationCtrl && typeof settings.duplication === "boolean") duplicationCtrl.checked = settings.duplication;
+    if (clipboardSyncCtrl && typeof settings.clipboardSync === "boolean") clipboardSyncCtrl.checked = settings.clipboardSync;
+    if (audioCtrl && typeof settings.audio === "boolean") audioCtrl.checked = settings.audio;
+    if (typeof settings.preferH264 === "boolean") {
+      prefersH264 = settings.preferH264 && typeof VideoDecoder === "function";
+    }
+    applySavedDisplay();
+  }
+
+  function readSharedSettings() {
+    return {
+      display: Number(displaySelect?.value || 0),
+      resolution: resolutionSelect?.value || "1080",
+      targetFps: targetFpsSelect?.value || "120",
+      quality: Number(qualitySlider?.value || 90),
+      preferH264: !!prefersH264,
+      webrtcMode: getWebrtcMode(),
+      mouse: !!mouseCtrl?.checked,
+      keyboard: !!kbdCtrl?.checked,
+      cursor: !!cursorCtrl?.checked,
+      duplication: !!duplicationCtrl?.checked,
+      clipboardSync: !!clipboardSyncCtrl?.checked,
+      audio: !!audioCtrl?.checked,
+      audioTransport: getAudioTransport(),
+      smoothing: Number(smoothingSlider?.value || 20),
+      recordMode: recordMode?.value || "normal",
+      recordFps: recordFps?.value || "",
+    };
+  }
+
+  applySharedSettings(await loadSharedUiSettings("remote_desktop"));
+  const sharedSettingsSaver = createSharedUiSettingsSaver("remote_desktop", readSharedSettings);
+
   if (codecH264) {
     codecH264.checked = prefersH264;
     codecH264.disabled = typeof VideoDecoder !== "function";
@@ -438,7 +521,7 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
   }
 
   function updateControls() {
-    const wsOpen = ws.readyState === WebSocket.OPEN;
+    const wsOpen = ws && ws.readyState === WebSocket.OPEN;
     const isStarting = streamState === "starting";
     const isStreaming = streamState === "streaming";
     const isStopping = streamState === "stopping";
@@ -707,7 +790,10 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
   }
 
   if (clipboardSyncCtrl) {
-    clipboardSyncCtrl.addEventListener("change", checkClipboardSync);
+    clipboardSyncCtrl.addEventListener("change", function () {
+      checkClipboardSync();
+      sharedSettingsSaver.scheduleSave();
+    });
   }
 
   function updateLatency(ms) {
@@ -778,18 +864,31 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
         desiredStreaming = true;
       }
       if (desiredStreaming) {
-        setStreamState("starting", "Reconnecting");
+        const shouldRequestStart = !["starting", "streaming", "stalled"].includes(streamState);
+        const mode = getWebrtcMode();
+        if (shouldRequestStart) {
+          setStreamState("starting", "Reconnecting");
+        }
         if (displaySelect && displaySelect.value !== undefined) {
           sendCmd("desktop_select_display", {
             display: parseInt(displaySelect.value, 10) || 0,
           });
         }
-        sendCmd("desktop_start", {});
         pushInputToggles();
         pushCaptureToggles();
         if (qualitySlider) pushQuality(qualitySlider.value);
         pushTargetFps();
         pushResolution();
+        if (shouldRequestStart) {
+          if (mode === "relayed") {
+            sendCmd("desktop_start", { webrtc: true });
+          } else if (mode === "p2p") {
+            sendCmd("desktop_start", {});
+            startP2P();
+          } else {
+            sendCmd("desktop_start", {});
+          }
+        }
       } else {
         setStreamState("idle", "Stopped");
       }
@@ -898,10 +997,10 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
       console.warn("No active client selected");
       return;
     }
-    if (ws.readyState !== WebSocket.OPEN) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
       rdDebug("send skipped websocket not open", {
         type,
-        readyState: ws.readyState,
+        readyState: ws ? ws.readyState : -1,
         streamState,
         desiredStreaming,
       });
@@ -1049,6 +1148,7 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
     if (displaySelect.options.length) {
       displaySelect.value = displaySelect.options[0].value;
     }
+    applySavedDisplay();
   }
 
   async function fetchClientInfo() {
@@ -1070,6 +1170,7 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
       }
       if (client) {
         populateDisplays(client.monitors, client.monitorInfo);
+        applySavedDisplay();
       }
       if (duplicationCtrl) {
         const os = (client?.os || "").toLowerCase();
@@ -1121,7 +1222,6 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
     codecH264.addEventListener("change", function () {
       resetH264SessionState();
       prefersH264 = !!codecH264.checked && typeof VideoDecoder === "function";
-      localStorage.setItem(codecPrefKey, prefersH264 ? "1" : "0");
       if (prefersH264) {
         ensureDuplicationForH264();
       }
@@ -1132,6 +1232,7 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
       if (qualitySlider) {
         pushQuality(qualitySlider.value);
       }
+      sharedSettingsSaver.scheduleSave();
     });
   }
 
@@ -1157,12 +1258,14 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
   if (resolutionSelect) {
     resolutionSelect.addEventListener("change", function () {
       pushResolution();
+      sharedSettingsSaver.scheduleSave();
     });
   }
 
   if (targetFpsSelect) {
     targetFpsSelect.addEventListener("change", function () {
       pushTargetFps();
+      sharedSettingsSaver.scheduleSave();
     });
   }
 
@@ -1171,11 +1274,13 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
     sendCmd("desktop_select_display", {
       display: parseInt(displaySelect.value, 10),
     });
+    sharedSettingsSaver.scheduleSave();
   });
 
   if (webrtcMode) {
     webrtcMode.addEventListener("change", function () {
       updateControls();
+      sharedSettingsSaver.scheduleSave();
     });
   }
 
@@ -1236,6 +1341,9 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
     } else {
       sendCmd("desktop_start", {});
     }
+    if (audioCtrl && audioCtrl.checked) {
+      connectAudio();
+    }
   });
   stopBtn.addEventListener("click", function () {
     if (isRecording()) stopRecording();
@@ -1251,6 +1359,16 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
       else startRecording();
     });
   }
+  if (recordMode) {
+    recordMode.addEventListener("change", function () {
+      sharedSettingsSaver.scheduleSave();
+    });
+  }
+  if (recordFps) {
+    recordFps.addEventListener("change", function () {
+      sharedSettingsSaver.scheduleSave();
+    });
+  }
   fullscreenBtn.addEventListener("click", function () {
     if (canvasContainer.requestFullscreen) {
       canvasContainer.requestFullscreen();
@@ -1260,16 +1378,6 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
       canvasContainer.mozRequestFullScreen();
     }
   });
-  if (mouseCtrl) {
-    mouseCtrl.checked = false;
-  }
-  if (kbdCtrl) {
-    kbdCtrl.checked = false;
-  }
-  if (duplicationCtrl) {
-    duplicationCtrl.checked = false;
-  }
-
   function pushInputToggles() {
     if (mouseCtrl) {
       sendCmd("desktop_enable_mouse", { enabled: !!mouseCtrl.checked });
@@ -1290,6 +1398,7 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
 
   mouseCtrl.addEventListener("change", function () {
     pushInputToggles();
+    sharedSettingsSaver.scheduleSave();
   });
   const kbdCapture = createKeyboardCapture({
     container: canvas,
@@ -1301,7 +1410,9 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
     if (kbdCtrl.checked) kbdCapture.enable();
     else kbdCapture.disable();
     pushInputToggles();
+    sharedSettingsSaver.scheduleSave();
   });
+  if (kbdCtrl.checked) kbdCapture.enable();
   document.addEventListener("fullscreenchange", function () {
     if (document.fullscreenElement === canvasContainer && kbdCtrl && !kbdCtrl.checked) {
       kbdCtrl.checked = true;
@@ -1310,10 +1421,12 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
   });
   cursorCtrl.addEventListener("change", function () {
     pushCaptureToggles();
+    sharedSettingsSaver.scheduleSave();
   });
   if (duplicationCtrl) {
     duplicationCtrl.addEventListener("change", function () {
       pushCaptureToggles();
+      sharedSettingsSaver.scheduleSave();
     });
   }
   if (audioCtrl) {
@@ -1323,6 +1436,7 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
       } else {
         disconnectAudio();
       }
+      sharedSettingsSaver.scheduleSave();
     });
   }
   if (audioTransport) {
@@ -1333,6 +1447,7 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
         disconnectAudio(false);
         connectAudio();
       }
+      sharedSettingsSaver.scheduleSave();
     });
   }
 
@@ -1341,6 +1456,7 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
     qualitySlider.addEventListener("input", function () {
       updateQualityLabel(qualitySlider.value);
       pushQuality(qualitySlider.value);
+      sharedSettingsSaver.scheduleSave();
     });
   }
 
@@ -1349,6 +1465,7 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
     smoothingSlider.addEventListener("input", function () {
       smoothingPct = Number(smoothingSlider.value) || 0;
       updateSmoothingLabel(smoothingSlider.value);
+      sharedSettingsSaver.scheduleSave();
     });
   }
 
@@ -1455,7 +1572,7 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
     prefersH264 = false;
     destroyVideoDecoder();
     if (codecH264) codecH264.checked = false;
-    localStorage.setItem(codecPrefKey, "0");
+    sharedSettingsSaver.scheduleSave();
     console.warn("rd: falling back to jpeg codec", reasonText);
     const q = Number(qualitySlider?.value) || 90;
     setCodecModeLabel("jpeg", "fallback");
@@ -1732,7 +1849,7 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
     });
   }
 
-  ws.addEventListener("message", function (ev) {
+  function onWsMessage(ev) {
     if (ev.data instanceof ArrayBuffer) {
       const buf = new Uint8Array(ev.data);
       if (isFramePacket(buf)) {
@@ -1798,9 +1915,10 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
       }
       return;
     }
-  });
+  }
 
-  ws.addEventListener("open", function () {
+  function onWsOpen() {
+    reconnectDelay = 1000;
     rdDebug("ws open", {
       url: ws.url,
       readyState: ws.readyState,
@@ -1812,7 +1930,27 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
     pushInputToggles();
     pushCaptureToggles();
     clearOfflineTimer();
-    setStreamState("idle", "Stopped");
+    if (desiredStreaming) {
+      setStreamState("starting", "Resuming stream");
+      if (displaySelect && displaySelect.value !== undefined) {
+        sendCmd("desktop_select_display", {
+          display: parseInt(displaySelect.value, 10) || 0,
+        });
+      }
+      pushTargetFps();
+      pushResolution();
+      const mode = getWebrtcMode();
+      if (mode === "relayed") {
+        sendCmd("desktop_start", { webrtc: true });
+      } else if (mode === "p2p") {
+        sendCmd("desktop_start", {});
+        startP2P();
+      } else {
+        sendCmd("desktop_start", {});
+      }
+    } else {
+      setStreamState("idle", "Stopped");
+    }
     sendCmd("desktop_record_status", {});
     fetchClientInfo().then(() => {
       if (displaySelect && displaySelect.value) {
@@ -1822,9 +1960,9 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
         });
       }
     });
-  });
+  }
 
-  ws.addEventListener("close", function (event) {
+  function onWsClose(event) {
     rdDebug("ws close", {
       code: event.code,
       reason: event.reason,
@@ -1832,22 +1970,28 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
       streamState,
       desiredStreaming,
     });
-    desiredStreaming = false;
     disconnectAudio();
     destroyVideoDecoder();
     stopAllWebrtc();
-    clearRecordingTimer();
-    serverRecording = null;
-    setRecordingUi(false);
-    setStreamState("disconnected", "Disconnected");
-  });
+    if (desiredStreaming) {
+      setStreamState("connecting", "Reconnecting");
+      scheduleReconnect();
+    } else {
+      clearRecordingTimer();
+      serverRecording = null;
+      setRecordingUi(false);
+      setStreamState("disconnected", "Disconnected");
+    }
+  }
 
-  ws.addEventListener("error", function (event) {
+  function onWsError(event) {
     console.warn("rd: ws error", event);
     destroyVideoDecoder();
     stopAllWebrtc();
     setStreamState("error", "WebSocket error");
-  });
+  }
+
+  connectWs();
 
   if (!frameWatchTimer) {
     frameWatchTimer = setInterval(() => {
@@ -1911,7 +2055,7 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
     }
 
     lastMoveSentAt = now;
-    if (ws.bufferedAmount <= inputBackpressureBytes) {
+    if (ws && ws.bufferedAmount <= inputBackpressureBytes) {
       sendCmd("mouse_move", sendPoint);
     }
   }
@@ -1966,8 +2110,9 @@ import { createKeyboardCapture } from "./keyboard-capture.js";
   });
 
   function stopOnExit() {
+    sharedSettingsSaver.saveNow();
     if (isRecording()) stopRecording();
-    if (ws.readyState === WebSocket.OPEN && desiredStreaming) {
+    if (ws && ws.readyState === WebSocket.OPEN && desiredStreaming) {
       desiredStreaming = false;
       sendCmd("desktop_stop", {});
     }

@@ -443,7 +443,7 @@ var (
 func encodeH264Frame(img *image.RGBA) ([]byte, error) {
 	h264Mu.Lock()
 	defer h264Mu.Unlock()
-	out, err := encodeH264FrameWithEncoder(&h264Enc, img)
+	out, err := encodeH264FrameWithEncoder(&h264Enc, "desktop", img)
 	h264LastErr = err
 	return out, err
 }
@@ -451,16 +451,16 @@ func encodeH264Frame(img *image.RGBA) ([]byte, error) {
 func encodeH264FrameHVNC(img *image.RGBA) ([]byte, error) {
 	hvncH264Mu.Lock()
 	defer hvncH264Mu.Unlock()
-	return encodeH264FrameWithEncoder(&hvncH264Enc, img)
+	return encodeH264FrameWithEncoder(&hvncH264Enc, "backstage", img)
 }
 
 func encodeH264FrameWebcam(img *image.RGBA) ([]byte, error) {
 	webcamH264Mu.Lock()
 	defer webcamH264Mu.Unlock()
-	return encodeH264FrameWithEncoder(&webcamH264Enc, img)
+	return encodeH264FrameWithEncoder(&webcamH264Enc, "webcam", img)
 }
 
-func encodeH264FrameWithEncoder(slot *h264FrameEncoder, img *image.RGBA) ([]byte, error) {
+func encodeH264FrameWithEncoder(slot *h264FrameEncoder, stream string, img *image.RGBA) ([]byte, error) {
 	if img == nil {
 		return nil, errors.New("nil h264 frame")
 	}
@@ -479,7 +479,7 @@ func encodeH264FrameWithEncoder(slot *h264FrameEncoder, img *image.RGBA) ([]byte
 			(*slot).Close()
 			*slot = nil
 		}
-		enc, err := newWindowsH264Encoder(width, height, fps)
+		enc, err := newWindowsH264Encoder(stream, width, height, fps)
 		if err != nil {
 			return nil, err
 		}
@@ -546,12 +546,13 @@ func closeH264Encoder(slot *h264FrameEncoder) {
 	}
 }
 
-func newWindowsH264Encoder(width, height, fps int) (h264FrameEncoder, error) {
-	if enc, err := newNativeH264Encoder(width, height, fps); err == nil {
+func newWindowsH264Encoder(stream string, width, height, fps int) (h264FrameEncoder, error) {
+	if enc, err := newNativeH264Encoder(stream, width, height, fps); err == nil {
 		return enc, nil
 	} else {
-		log.Printf("capture: native NVENC D3D11 h264 encoder unavailable for %dx%d@%dfps: %v; trying Media Foundation", width, height, fps, err)
+		log.Printf("capture: native NVENC D3D11 h264 encoder unavailable stream=%s size=%dx%d fps=%d: %v; trying Media Foundation", stream, width, height, fps, err)
 	}
+	log.Printf("capture: media foundation h264 fallback selected stream=%s size=%dx%d fps=%d", stream, width, height, fps)
 	return newMFH264Encoder(width, height, fps)
 }
 

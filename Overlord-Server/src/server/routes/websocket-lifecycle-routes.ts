@@ -941,6 +941,7 @@ export function handleWebSocketClose(
     if (!stillViewing) {
       const target = clientManager.getClient(removedClientId);
       deps.sendDesktopCommand(target, "desktop_stop", {});
+      deps.sendDesktopCommand(target, "webrtc_stop", { kind: "desktop" });
       deps.rdStreamingState.delete(removedClientId);
       logger.debug(`[rd] cleaned up state for client ${removedClientId}`);
     }
@@ -970,6 +971,7 @@ export function handleWebSocketClose(
   }
 
   if (role === "hvnc_viewer") {
+    deps.cleanupRdViewerP2P(ws);
     let removedClientId = clientId;
     for (const [sid, sess] of sessionManager.getAllHvncSessions().entries()) {
       if (sess.viewer === ws) {
@@ -984,6 +986,7 @@ export function handleWebSocketClose(
       const target = clientManager.getClient(removedClientId);
       if (target) {
         deps.sendHVNCCommand(target, "hvnc_stop", {});
+        deps.sendHVNCCommand(target, "webrtc_stop", { kind: "hvnc" });
       }
       deps.hvncStreamingState.delete(removedClientId);
       logger.debug(`[hvnc] cleaned up state for client ${removedClientId}`);

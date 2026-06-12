@@ -1524,7 +1524,7 @@ type nativeH264Encoder struct {
 	scratch      []byte
 }
 
-func newNativeH264Encoder(width, height, fps int) (h264FrameEncoder, error) {
+func newNativeH264Encoder(stream string, width, height, fps int) (h264FrameEncoder, error) {
 	bitrate := targetH264Bitrate(width, height, fps)
 	raw := C.nvenc_create_d3d11_encoder(C.int(width), C.int(height), C.int(fps), C.int(bitrate))
 	if raw.encoder == nil {
@@ -1537,7 +1537,7 @@ func newNativeH264Encoder(width, height, fps int) (h264FrameEncoder, error) {
 		requestedFPS: fps,
 		fps:          fps,
 	}
-	log.Printf("capture: native NVENC D3D11 h264 encoder active provider=NVIDIA NVENC size=%dx%d fps=%d input=NV12(upload) bitrate=%d", width, height, fps, bitrate)
+	log.Printf("capture: native NVENC D3D11 h264 encoder active stream=%s provider=NVIDIA NVENC size=%dx%d fps=%d input=NV12(upload) bitrate=%d", stream, width, height, fps, bitrate)
 	return enc, nil
 }
 

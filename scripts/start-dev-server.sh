@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -eu
-ROOT="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 SERVER_DIR="$ROOT/Overlord-Server"
 BUN_BIN="${BUN_BIN:-bun}"
 

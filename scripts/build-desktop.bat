@@ -1,20 +1,32 @@
 @echo off
+setlocal
+set "SCRIPT_DIR=%~dp0"
+for %%I in ("%SCRIPT_DIR%..") do set "ROOT=%%~fI\"
+
 echo === Building Overlord Desktop (Tauri) ===
-cd /d "%~dp0Overlord-Desktop"
+pushd "%ROOT%Overlord-Desktop"
 
 where bun >nul 2>&1
 if errorlevel 1 (
   echo error: bun is required ^(https://bun.sh^)
-  exit /b 1
+  goto :err
 )
 where cargo >nul 2>&1
 if errorlevel 1 (
   echo error: rust toolchain is required ^(https://rustup.rs^)
-  exit /b 1
+  goto :err
 )
 
-call bun install || exit /b 1
-call bun run vendor || exit /b 1
-call bun run build:win || exit /b 1
+call bun install || goto :err
+call bun run vendor || goto :err
+call bun run build:win || goto :err
 echo === Done — bundle output: Overlord-Desktop\src-tauri\target\release\bundle\ ===
+popd
 pause
+endlocal
+exit /b 0
+
+:err
+popd >nul 2>&1
+endlocal
+exit /b 1

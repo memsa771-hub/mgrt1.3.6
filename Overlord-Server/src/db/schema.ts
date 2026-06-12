@@ -330,6 +330,15 @@ db.run(`
 db.run(`CREATE INDEX IF NOT EXISTS idx_build_profiles_user_updated ON build_profiles(user_id, updated_at DESC);`);
 
 db.run(`
+  CREATE TABLE IF NOT EXISTS shared_ui_settings (
+    scope TEXT PRIMARY KEY,
+    settings_json TEXT NOT NULL,
+    updated_by_user_id INTEGER,
+    updated_at INTEGER NOT NULL
+  );
+`);
+
+db.run(`
   CREATE TABLE IF NOT EXISTS saved_scripts (
     id TEXT PRIMARY KEY,
     user_id INTEGER NOT NULL,

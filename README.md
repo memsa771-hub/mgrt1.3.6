@@ -276,19 +276,19 @@ Prerequisites:
 Development mode (starts server + client):
 
 ```bat
-start-dev.bat
+scripts\start-dev.bat
 ```
 
 Production mode (build + run server executable):
 
 ```bat
-start-prod.bat
+scripts\start-prod.bat
 ```
 
 Build client binaries (adds client builds to the build queue):
 
 ```bat
-build-clients.bat
+scripts\build-clients.bat
 ```
 
 ### Linux / macOS
@@ -296,26 +296,26 @@ build-clients.bat
 Make scripts executable once:
 
 ```bash
-chmod +x start-dev.sh start-dev-server.sh start-dev-client.sh start-prod.sh build-prod-package.sh
+chmod +x scripts/*.sh scripts/*.command
 ```
 
 Development mode (server in background, client in foreground):
 
 ```bash
-./start-dev.sh
+./scripts/start-dev.sh
 ```
 
 Only server, or only client:
 
 ```bash
-./start-dev.sh server
-./start-dev.sh client
+./scripts/start-dev.sh server
+./scripts/start-dev.sh client
 ```
 
 Production mode:
 
 ```bash
-./start-prod.sh
+./scripts/start-prod.sh
 ```
 
 ---
@@ -327,7 +327,7 @@ Build a production-ready package where the server can still build client binarie
 Windows:
 
 ```bat
-build-prod-package.bat
+scripts\build-prod-package.bat
 ```
 
 Output: `release/`
@@ -335,7 +335,7 @@ Output: `release/`
 Linux / macOS:
 
 ```bash
-./build-prod-package.sh
+./scripts/build-prod-package.sh
 ```
 
 Output: `release/prod-package/`

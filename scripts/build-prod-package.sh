@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 SERVER_SRC="$ROOT/Overlord-Server"
 CLIENT_SRC="$ROOT/Overlord-Client"
 DIST_CLIENTS_SRC="$ROOT/dist-clients"
