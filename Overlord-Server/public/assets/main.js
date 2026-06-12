@@ -28,6 +28,7 @@ const sortSelect = document.getElementById("sort");
 const filterStatusSelect = document.getElementById("filter-status");
 const filterOsSelect = document.getElementById("filter-os");
 const filterGroupSelect = document.getElementById("filter-group");
+const filterWebcamSelect = document.getElementById("filter-webcam");
 const showOfflineToggle = document.getElementById("toggle-offline");
 const displayFieldsMenu = document.getElementById("display-fields-menu");
 const selectAllBtn = document.getElementById("select-all");
@@ -56,6 +57,7 @@ const PREF_SORT_KEY = "overlord_sort";
 const PREF_FILTER_OS_KEY = "overlord_filter_os";
 const PREF_FILTER_COUNTRY_KEY = "overlord_filter_country";
 const PREF_FILTER_GROUP_KEY = "overlord_filter_group";
+const PREF_FILTER_WEBCAM_KEY = "overlord_filter_webcam";
 const PREF_DISPLAY_FIELDS_KEY = "overlord_display_fields";
 const DEFAULT_DISPLAY_FIELDS = {
   user: true,
@@ -944,6 +946,7 @@ function initializeRenderer() {
     requestPreview,
     requestThumbnail,
     pingClient: (id) => sendCommand(id, "ping"),
+    onOpenWebcam: (id) => window.open(`/webcam?clientId=${encodeURIComponent(id)}`, "_blank", "noopener"),
     onMacPermissionRequest: (id, _card, permissionKey) => requestMacPermissions(id, permissionKey),
     onMacPermissionRefresh: (id) => requestMacPermissions(id, "", { refreshOnly: true }),
     onMacPermissionApply: (id) => applyMacPermissionChanges(id),
@@ -1057,6 +1060,14 @@ filterGroupSelect?.addEventListener("change", (e) => {
   loadWithOptions({ force: true, reorder: true });
 });
 
+filterWebcamSelect?.addEventListener("change", (e) => {
+  state.filterWebcam = e.target.value;
+  localStorage.setItem(PREF_FILTER_WEBCAM_KEY, state.filterWebcam);
+  state.page = 1;
+  state.lastDigest = "";
+  loadWithOptions({ force: true, reorder: true });
+});
+
 import("./country-picker.js").then(({ initCountryPicker }) => {
   initCountryPicker((code) => {
     state.filterCountry = code;
@@ -1078,7 +1089,7 @@ import("./country-picker.js").then(({ initCountryPicker }) => {
   }
 
   const savedSort = localStorage.getItem(PREF_SORT_KEY);
-  const validSorts = ["stable", "last_seen_desc", "host_asc", "ping_asc", "ping_desc", "country_asc", "country_desc", "group_asc", "group_desc", "admin_first"];
+  const validSorts = ["stable", "last_seen_desc", "host_asc", "ping_asc", "ping_desc", "country_asc", "country_desc", "group_asc", "group_desc", "admin_first", "elevated_first"];
   if (savedSort && validSorts.includes(savedSort)) {
     state.sort = savedSort;
     if (sortSelect) sortSelect.value = savedSort;
@@ -1099,6 +1110,12 @@ import("./country-picker.js").then(({ initCountryPicker }) => {
   if (savedGroup) {
     state.filterGroup = savedGroup;
     if (filterGroupSelect) filterGroupSelect.value = savedGroup;
+  }
+
+  const savedWebcam = localStorage.getItem(PREF_FILTER_WEBCAM_KEY);
+  if (savedWebcam && ["all", "available", "none"].includes(savedWebcam)) {
+    state.filterWebcam = savedWebcam;
+    if (filterWebcamSelect) filterWebcamSelect.value = savedWebcam;
   }
 })();
 

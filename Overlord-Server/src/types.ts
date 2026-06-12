@@ -39,6 +39,8 @@ export type ClientInfo = {
   ram?: string;
   batteryPercent?: number | null;
   batteryCharging?: boolean | null;
+  webcamAvailable?: boolean;
+  webcamDevices?: { index: number; name: string; maxFps?: number }[];
   isAdmin?: boolean;
   elevation?: string;
   permissions?: Record<string, boolean>;
@@ -69,6 +71,7 @@ export type ListFilters = {
   allowedClientIds?: string[];
   deniedClientIds?: string[];
   groupFilter?: string;
+  webcamFilter?: string;
 };
 
 export type ListItem = Omit<ClientInfo, 'ws'> & {

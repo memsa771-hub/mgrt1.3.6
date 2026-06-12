@@ -120,6 +120,7 @@ function clientQueryParams(page = state.page) {
     os: state.filterOs || "all",
     country: state.filterCountry || "all",
     group: state.filterGroup || "all",
+    webcam: state.filterWebcam || "all",
   });
 }
 
@@ -222,6 +223,11 @@ function updateOsFilter(items) {
   allOption.textContent = "All OS";
   osSelect.appendChild(allOption);
 
+  const windowsOption = document.createElement("option");
+  windowsOption.value = "windows";
+  windowsOption.textContent = "Windows";
+  osSelect.appendChild(windowsOption);
+
   osArray.forEach((os) => {
     const option = document.createElement("option");
     option.value = os;
@@ -229,7 +235,7 @@ function updateOsFilter(items) {
     osSelect.appendChild(option);
   });
 
-  if (currentValue !== "all" && osList.has(currentValue)) {
+  if (currentValue === "windows" || (currentValue !== "all" && osList.has(currentValue))) {
     osSelect.value = currentValue;
   }
 }

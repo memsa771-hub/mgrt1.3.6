@@ -7,6 +7,7 @@ export const state = {
   filterOs: "all",
   filterCountry: "all",
   filterGroup: "all",
+  filterWebcam: "all",
   lastDigest: "",
   isLoading: false,
   pendingForce: false,

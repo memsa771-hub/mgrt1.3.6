@@ -1,16 +1,28 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { db } from "./db/connection";
-import { deleteClientRow, getClientMetricsSummary, listClients, setClientBookmark, setClientTag, upsertClientRow } from "./db";
+import { deleteClientRow, getClientMetricsSummary, listClients, setClientBookmark, setClientTag, setClientWebcamInfo, upsertClientRow } from "./db";
 
 const createdClientIds: string[] = [];
 
-function createTempClient(id: string, options: { online: boolean; lastSeen: number; host: string; pingMs?: number; bookmarked?: boolean }) {
+function createTempClient(
+  id: string,
+  options: {
+    online: boolean;
+    lastSeen: number;
+    host: string;
+    pingMs?: number;
+    bookmarked?: boolean;
+    os?: string;
+    isAdmin?: boolean;
+    elevation?: string;
+  },
+) {
   upsertClientRow({
     id,
     hwid: id,
     role: "client",
     host: options.host,
-    os: "windows",
+    os: options.os || "windows",
     arch: "amd64",
     version: "1.0.0",
     user: "tester",
@@ -18,6 +30,8 @@ function createTempClient(id: string, options: { online: boolean; lastSeen: numb
     lastSeen: options.lastSeen,
     online: options.online ? 1 : 0,
     pingMs: options.pingMs,
+    isAdmin: options.isAdmin,
+    elevation: options.elevation,
   });
   if (options.bookmarked) {
     setClientBookmark(id, true);
@@ -186,6 +200,144 @@ describe("client metrics summary", () => {
 
       expect(after.byOS[approvedOs]).toBe((before.byOS[approvedOs] || 0) + 1);
       expect(after.byOS[pendingOs] || 0).toBe(before.byOS[pendingOs] || 0);
+    } finally {
+      cleanupCreatedClients();
+    }
+  });
+
+  test("webcam filter returns only clients with available webcam devices", () => {
+    try {
+      const prefix = `webcam-filter-${Date.now().toString(36)}`;
+      const now = Date.now();
+      const withWebcam = `${prefix}-with`;
+      const withoutWebcam = `${prefix}-without`;
+      const legacyWebcam = `${prefix}-legacy`;
+
+      createTempClient(withWebcam, {
+        online: true,
+        lastSeen: now,
+        host: "webcam-host",
+      });
+      createTempClient(withoutWebcam, {
+        online: true,
+        lastSeen: now - 1,
+        host: "plain-host",
+      });
+      createTempClient(legacyWebcam, {
+        online: true,
+        lastSeen: now - 2,
+        host: "legacy-webcam-host",
+      });
+      setClientWebcamInfo(withWebcam, true, [{ index: 0, name: "Integrated Camera" }]);
+      db.run(
+        `UPDATE clients SET webcam_available=0, webcam_devices=? WHERE id=?`,
+        JSON.stringify([{ index: 1, name: "USB Camera" }]),
+        legacyWebcam,
+      );
+
+      const result = listClients({
+        page: 1,
+        pageSize: 12,
+        search: prefix,
+        sort: "last_seen_desc",
+        statusFilter: "all",
+        osFilter: "all",
+        countryFilter: "all",
+        enrollmentFilter: "all",
+        webcamFilter: "available",
+      });
+
+      expect(result.items.map((item) => item.id).sort()).toEqual([legacyWebcam, withWebcam].sort());
+      expect(result.items.every((item) => item.webcamAvailable)).toBe(true);
+    } finally {
+      cleanupCreatedClients();
+    }
+  });
+
+  test("general Windows OS filter includes Windows version variants", () => {
+    try {
+      const prefix = `windows-filter-${Date.now().toString(36)}`;
+      const now = Date.now();
+      const win24h2 = `${prefix}-24h2`;
+      const win25h2 = `${prefix}-25h2`;
+      const mac = `${prefix}-mac`;
+
+      createTempClient(win24h2, {
+        online: true,
+        lastSeen: now,
+        host: "win-24h2",
+        os: "Windows 11 Pro 24H2",
+      });
+      createTempClient(win25h2, {
+        online: true,
+        lastSeen: now - 1,
+        host: "win-25h2",
+        os: "Windows 11 Pro 25H2",
+      });
+      createTempClient(mac, {
+        online: true,
+        lastSeen: now - 2,
+        host: "mac-host",
+        os: "macOS 15.5",
+      });
+
+      const result = listClients({
+        page: 1,
+        pageSize: 12,
+        search: prefix,
+        sort: "last_seen_desc",
+        statusFilter: "all",
+        osFilter: "windows",
+        countryFilter: "all",
+        enrollmentFilter: "all",
+      });
+
+      expect(result.items.map((item) => item.id).sort()).toEqual([win24h2, win25h2].sort());
+    } finally {
+      cleanupCreatedClients();
+    }
+  });
+
+  test("elevated sort puts elevated clients before regular clients", () => {
+    try {
+      const prefix = `elevated-sort-${Date.now().toString(36)}`;
+      const now = Date.now();
+      const regular = `${prefix}-regular`;
+      const system = `${prefix}-system`;
+      const trustedInstaller = `${prefix}-ti`;
+
+      createTempClient(regular, {
+        online: true,
+        lastSeen: now,
+        host: "regular-host",
+      });
+      createTempClient(system, {
+        online: true,
+        lastSeen: now - 1,
+        host: "system-host",
+        isAdmin: true,
+        elevation: "system",
+      });
+      createTempClient(trustedInstaller, {
+        online: true,
+        lastSeen: now - 2,
+        host: "ti-host",
+        isAdmin: true,
+        elevation: "trustedinstaller",
+      });
+
+      const result = listClients({
+        page: 1,
+        pageSize: 12,
+        search: prefix,
+        sort: "elevated_first",
+        statusFilter: "all",
+        osFilter: "all",
+        countryFilter: "all",
+        enrollmentFilter: "all",
+      });
+
+      expect(result.items.map((item) => item.id)).toEqual([trustedInstaller, system, regular]);
     } finally {
       cleanupCreatedClients();
     }

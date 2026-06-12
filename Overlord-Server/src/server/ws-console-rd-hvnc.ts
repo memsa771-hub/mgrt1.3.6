@@ -11,6 +11,7 @@ import * as sessionManager from "../sessions/sessionManager";
 import type { ConsoleSession, RemoteDesktopViewer, SocketData } from "../sessions/types";
 import type { ClientInfo } from "../types";
 import { canUserAccessClient } from "../users";
+import { setClientWebcamInfo } from "../db";
 import { issueWebrtcPublishToken, webrtcStreamPathFor } from "./routes/webrtc-routes";
 import {
   buildViewerFrameBuffer,
@@ -775,8 +776,23 @@ export function handleWebcamViewerOpen(ws: ServerWebSocket<SocketData>) {
 }
 
 export function handleWebcamDevices(clientId: string, payload: any) {
+  const devices = Array.isArray(payload?.devices)
+    ? payload.devices.slice(0, 32).map((device: any, index: number) => ({
+      index: Number.isFinite(Number(device?.index)) ? Number(device.index) : index,
+      name: String(device?.name || `Camera ${index + 1}`).replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "").slice(0, 160),
+      ...(Number.isFinite(Number(device?.maxFps)) && Number(device.maxFps) > 0
+        ? { maxFps: Math.min(240, Math.round(Number(device.maxFps))) }
+        : {}),
+    }))
+    : [];
+  const target = clientManager.getClient(clientId);
+  if (target) {
+    target.webcamAvailable = devices.length > 0;
+    target.webcamDevices = devices;
+  }
+  setClientWebcamInfo(clientId, devices.length > 0, devices);
   for (const session of sessionManager.getWebcamSessionsForClient(clientId)) {
-    safeSendViewer(session.viewer, payload);
+    safeSendViewer(session.viewer, { ...payload, devices });
   }
 }
 

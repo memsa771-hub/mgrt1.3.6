@@ -86,8 +86,17 @@ try {
   db.run(`ALTER TABLE clients ADD COLUMN battery_charging INTEGER`);
 } catch {}
 try {
+  db.run(`ALTER TABLE clients ADD COLUMN webcam_available INTEGER NOT NULL DEFAULT 0`);
+} catch {}
+try {
+  db.run(`ALTER TABLE clients ADD COLUMN webcam_devices TEXT`);
+} catch {}
+try {
   db.run(`ALTER TABLE clients ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0`);
 } catch {}
+db.run(
+  `CREATE INDEX IF NOT EXISTS idx_clients_webcam_available ON clients(webcam_available);`,
+);
 db.run(
   `CREATE INDEX IF NOT EXISTS idx_clients_public_key ON clients(public_key);`,
 );

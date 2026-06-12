@@ -237,6 +237,7 @@ function summarizeCpuProfile(profile: any, durationMs: number) {
 const SHARED_UI_SETTING_FEATURES: Record<string, FeatureName> = {
   remote_desktop: "remote_desktop",
   hvnc: "hvnc",
+  webcam: "webcam",
 };
 
 function pickString(value: unknown, allowed: readonly string[]): string | undefined {
@@ -299,6 +300,9 @@ function sanitizeSharedUiSettings(scope: string, raw: unknown): Record<string, u
     assignIfDefined(out, "cloneProfile", pickBoolean(input.cloneProfile));
     assignIfDefined(out, "cloneLite", pickBoolean(input.cloneLite));
     assignIfDefined(out, "killIfRunning", pickBoolean(input.killIfRunning));
+  } else if (scope === "webcam") {
+    assignIfDefined(out, "camera", pickSteppedNumber(input.camera, 0, 63));
+    assignIfDefined(out, "fps", pickSteppedNumber(input.fps, 1, 120));
   }
 
   return out;

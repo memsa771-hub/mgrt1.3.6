@@ -2277,6 +2277,7 @@ html.nav-pre-sidebar.nav-pre-collapsed #top-nav:empty::before {
 #filter-status,
 #filter-os,
 #filter-group,
+#filter-webcam,
 #sort {
   transition:
     border-color 150ms ease,
@@ -2287,6 +2288,7 @@ html.nav-pre-sidebar.nav-pre-collapsed #top-nav:empty::before {
 #filter-status:focus,
 #filter-os:focus,
 #filter-group:focus,
+#filter-webcam:focus,
 #sort:focus {
   border-color: rgba(100, 116, 139, 0.82) !important;
   box-shadow: none !important;
@@ -2715,6 +2717,7 @@ textarea,
 #filter-status,
 #filter-os,
 #filter-group,
+#filter-webcam,
 #sort,
 #console-input {
   background-color: var(--ui-surface);
@@ -2735,6 +2738,7 @@ textarea:focus,
 #filter-status:focus,
 #filter-os:focus,
 #filter-group:focus,
+#filter-webcam:focus,
 #sort:focus,
 #console-input:focus {
   border-color: var(--ui-border-strong) !important;
@@ -2951,6 +2955,9 @@ tbody tr:hover {
 .cv-pill-admin { background: rgba(234, 179, 8, 0.12); color: #fde68a; border-color: rgba(234, 179, 8, 0.3); }
 .cv-pill-system { background: rgba(239, 68, 68, 0.12); color: #fca5a5; border-color: rgba(239, 68, 68, 0.3); }
 .cv-pill-ti { background: rgba(168, 85, 247, 0.12); color: #d8b4fe; border-color: rgba(168, 85, 247, 0.3); }
+.cv-pill-webcam { background: rgba(20, 184, 166, 0.12); color: #99f6e4; border-color: rgba(20, 184, 166, 0.3); }
+.cv-mini-pill.cv-webcam-btn { padding: 0; cursor: pointer; }
+.cv-mini-pill.cv-webcam-btn:hover { background: rgba(20, 184, 166, 0.20); border-color: rgba(20, 184, 166, 0.5); }
 .cv-pill-muted { background: rgba(245, 158, 11, 0.12); color: #fcd34d; border-color: rgba(245, 158, 11, 0.3); }
 .cv-pill-macperm.is-ok { background: rgba(16, 185, 129, 0.12); color: #86efac; border-color: rgba(16, 185, 129, 0.3); }
 .cv-pill-macperm.is-warn { background: rgba(245, 158, 11, 0.12); color: #fcd34d; border-color: rgba(245, 158, 11, 0.3); }
@@ -3228,6 +3235,8 @@ tbody tr:hover {
 }
 .cv-icon-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .cv-icon-btn.cv-icon-sm { width: 26px; height: 26px; font-size: 11px; }
+.cv-icon-btn.cv-webcam-btn { color: #99f6e4; border-color: rgba(20, 184, 166, 0.3); }
+.cv-icon-btn.cv-webcam-btn:hover { background: rgba(20, 184, 166, 0.10); border-color: rgba(20, 184, 166, 0.45); }
 .cv-icon-btn.cv-icon-danger { color: var(--cv-danger); border-color: rgba(239, 68, 68, 0.25); }
 .cv-icon-btn.cv-icon-danger:hover { background: rgba(239, 68, 68, 0.10); border-color: rgba(239, 68, 68, 0.45); }
 

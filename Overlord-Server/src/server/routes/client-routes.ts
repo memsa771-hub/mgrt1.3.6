@@ -84,15 +84,16 @@ export async function handleClientRoutes(
     const countryFilter = url.searchParams.get("country") || "all";
     const enrollmentFilter = url.searchParams.get("enrollmentFilter") || "approved";
     const groupFilter = url.searchParams.get("group") || "all";
+    const webcamFilter = url.searchParams.get("webcam") || "all";
     const isEnrollmentRequest = url.searchParams.has("enrollmentFilter");
 
     if (user.role === "admin") {
-      const result = listClients({ page, pageSize, search, sort, statusFilter, osFilter, countryFilter, enrollmentFilter, groupFilter });
+      const result = listClients({ page, pageSize, search, sort, statusFilter, osFilter, countryFilter, enrollmentFilter, groupFilter, webcamFilter });
       return Response.json(result, { headers: deps.CORS_HEADERS });
     }
 
     if (user.role === "operator" && isEnrollmentRequest) {
-      const result = listClients({ page, pageSize, search, sort, statusFilter, osFilter, countryFilter, enrollmentFilter, groupFilter, builtByUserId: user.userId, requireBuildOwner: true });
+      const result = listClients({ page, pageSize, search, sort, statusFilter, osFilter, countryFilter, enrollmentFilter, groupFilter, webcamFilter, builtByUserId: user.userId, requireBuildOwner: true });
       return Response.json(result, { headers: deps.CORS_HEADERS });
     }
 
@@ -104,7 +105,7 @@ export async function handleClientRoutes(
     const allowedClientIds = scope === "allowlist" ? listUserClientRuleIdsByAccess(user.userId, "allow") : undefined;
     const deniedClientIds = scope === "denylist" ? listUserClientRuleIdsByAccess(user.userId, "deny") : undefined;
 
-    const result = listClients({ page, pageSize, search, sort, statusFilter, osFilter, countryFilter, enrollmentFilter, groupFilter, allowedClientIds, deniedClientIds });
+    const result = listClients({ page, pageSize, search, sort, statusFilter, osFilter, countryFilter, enrollmentFilter, groupFilter, webcamFilter, allowedClientIds, deniedClientIds });
     return Response.json(result, { headers: deps.CORS_HEADERS });
   }
 

